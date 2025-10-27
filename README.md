@@ -329,14 +329,6 @@ def main():
 
     _ = llm.generate(inputs, use_tqdm=False)
 
-    # generate rope param
-    save_func = tvm.get_global_func("runtime.SaveParamsMMap")
-    nd_path = f"{save_dir}/{num_die}die/rope_param.params"
-    param_nd = np.zeros((max_model_len, 2, 64), dtype=np.float16)
-    generate = {}
-    generate["rope_param"] = tvm.nd.array(param_nd)
-    save_func(generate, nd_path)
-
 
 if __name__ == "__main__":
     main()
