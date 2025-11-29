@@ -300,16 +300,13 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 
    
 ### 格式转换
-量化后的新目录可能缺少（评估和编译需要的）文件，可用以下脚本从原目录把文件都拷贝一份。
-   ```shell
-   python3 copy_unique_files.py --source src_model_path --target quantized_model_path
-   ```
+
 量化完成后需执行以下命令进行格式转换。  
    ```shell
    python3 checkpoint_convert.py --src quantized_model_path --dst coverted_model_path --quant_type awq
    ```
-
 完成转换后即可进行模型编译或精度评估。
+
 
 ### 精度评估
 - EvalScope官方链接：
@@ -906,18 +903,18 @@ Qwen3-VL-4b-AWQ-AOT_960x540_8192_4die_image_01230123$ tree
 
 若在使用产品过程中遇到问题，可以参考此文档。
 
-### 1. 编译阶段出现segmentation fault(core dump)
+### 1. 编译失败提示类似缺少文件的提示。
 
 **问题描述**：
 
-编译过程中如果出现段错误，可能是pyarrow包版本问题
+当前版本的量化工具在量化结束（并格式转换）后可能会编译错误。原因是缺少一些文件，需要从原始模型目录拷贝过来。
 
 **解决方法**：
 
-将``pyarrow``包降级至``16.0.0``，
-```shell
-pip install pyarrow==16.0.0
-```
+一般根据编译时对应提示拷贝文件即可。
+举例说明：
+Qwen3-VL-4B-AWQ 缺少 preprocessor_config.json 文件;
+Qwen3-4B-AWQ 缺少 chat_template.jinja、merges.txt、tokenizer.json、tokenizer_config.json、vocab.json。
 
 ### 2. 编译阶段出现 RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!
 
