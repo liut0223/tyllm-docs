@@ -300,10 +300,15 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 
    
 ### 格式转换
+量化后的新目录可能缺少（评估和编译需要的）文件，可用以下脚本从原目录把文件都拷贝一份。
+   ```shell
+   python3 copy_unique_files.py --source src_model_path --target quantized_model_path
+   ```
 量化完成后需执行以下命令进行格式转换。  
    ```shell
    python3 checkpoint_convert.py --src quantized_model_path --dst coverted_model_path --quant_type awq
    ```
+
 完成转换后即可进行模型编译或精度评估。
 
 ### 精度评估
@@ -478,6 +483,9 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 
 ```python
 from tyllm.build_util import build_and_compile_llm
+from tyllm import torch_edgex
+from vllm.config import ModelConfig
+ModelConfig.verify_with_parallel_config = lambda a, b: True
 
 quant_path = "./Qwen3-1.7B-AWQ"
 aot_path = f"{quant_path}-AOT"
