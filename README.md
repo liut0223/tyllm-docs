@@ -72,7 +72,7 @@
 ### 安装Nvidia GPU 驱动
 
 ```shell
-sudo apt install nvidia-driver-530 # 驱动版本尽量选择最高
+sudo apt install nvidia-driver-530 # 驱动版本尽量选择最高（当前量化工具cuda-12.6，驱动建议安装580及以上）。
 # 安装完成后，执行nvidia-smi命令显示如下，表示安装成功。
 +---------------------------------------------------------------------------------------+
 | NVIDIA-SMI 535.179                Driver Version: 535.179      CUDA Version: 12.2     |
