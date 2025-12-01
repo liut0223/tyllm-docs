@@ -6,9 +6,9 @@
 
 **20251128/v1.1.7**
 
-- 🚀v1.1.7正式版本发布
-- 🚀独立的量化工具镜像
-- 🚀独立的编译工具镜像
+- 🚀正式版本v1.1.7
+- 🚀独立的量化工具镜像(v1.0.3)
+- 🚀独立的编译工具镜像(v1.1.7)
 - 🚀更新大模型支持列表
 - 🚀更新量化工具使用说明
 - 🚀更新编译工具使用说明
@@ -46,6 +46,8 @@
 | :------------------------------------------- | :-----------: | :-------------: |
 | Qwen/Qwen3-VL-8B                             |      ✅       |       ✅        |
 | Qwen/Qwen3-VL-4B                             |      ✅       |       ✅        |
+| Qwen/Qwen3-VL-2B                             |      ✅       |       ✅        |
+| Qwen/Qwen3-8B                                |      ✅       |       ✅        |
 | Qwen/Qwen3-4B                                |      ✅       |       ✅        |
 | Qwen/Qwen3-1.7B                              |      ✅       |       ✅        |
 | Qwen/Qwen2.5-VL-7B                           |      ✅       |       ✅        |
@@ -72,19 +74,19 @@
 ### 安装Nvidia GPU 驱动
 
 ```shell
-sudo apt install nvidia-driver-530 # 驱动版本尽量选择最高（当前量化工具cuda-12.6，驱动建议安装580及以上）。
+sudo apt install nvidia-driver-530 # 驱动版本尽量选择最高（当前量化工具cuda-12.6,驱动建议安装580及以上）。
 # 安装完成后，执行nvidia-smi命令显示如下，表示安装成功。
-+---------------------------------------------------------------------------------------+
-| NVIDIA-SMI 535.179                Driver Version: 535.179      CUDA Version: 12.2     |
-|-----------------------------------------+----------------------+----------------------+
-| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
-|                                         |                      |               MIG M. |
-|=========================================+======================+======================|
-|   0  NVIDIA GeForce RTX 3090        On  | 00000000:84:00.0 Off |                  N/A |
-| 30%   27C    P8              23W / 350W |      3MiB / 24576MiB |      0%      Default |
-|                                         |                      |                  N/A |
-+-----------------------------------------+----------------------+----------------------+
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.82.09              Driver Version: 580.82.09      CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 4090        Off |   00000000:67:00.0 Off |                  Off |
+| 56%   49C    P0             68W /  450W |       3MiB /  24564MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
                                                                                          
 +---------------------------------------------------------------------------------------+
 | Processes:                                                                            |
@@ -100,7 +102,6 @@ sudo apt install nvidia-driver-530 # 驱动版本尽量选择最高（当前量�
 ```shell
 sudo apt install docker.io
 sudo docker -v
-# Docker version 20.10.21, build 20.10.21-0ubuntu1~20.04.2
 ```
 
 ### 安装Nvidia Container Toolkit
@@ -123,7 +124,7 @@ sudo apt install nvidia-container-toolkit
 
 ### 安装TyQuant量化工具
 
-量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.0.2``：
+量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.0.3``：
 
 ```shell
 sudo docker login 113.100.143.90:8091 -u custom -p DE@sz_intellif_2021
@@ -168,7 +169,7 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 
 ## 模型量化
 
-建议使用带GPU的主机加快量化速度。
+务必使用带GPU的主机加快量化速度。
 
 ### 量化示例1-LLM模型
 
@@ -204,39 +205,46 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 
    # 配置量化超参并生成量化模型
    quant_config = get_awq_config()
-   quantized_model = quantize_model(model, quant_config, dataloader, tokenizer)
+   quantized_model = quantize_model(model, quant_config, dataloader)
 
    # 保存量化模型
-   save_quantized_model(quantized_model, dst_model_path)
+   save_quantized_model(quantized_model, dst_model_path, tokenizer)
    ```
 
 ### 量化示例2-VLM模型
 
-以Qwen2.5-vl-7B为例，目前暂时仅支持VLM多模态模型的language mdoel的AWQ方式量化，visual model的AWQ量化暂时不支持。
+以Qwen3-vl-4B为例，目前暂时仅支持VLM多模态模型的language mdoel的AWQ方式量化，visual model的AWQ量化暂时不支持。
 
+建议使用gpu机器进行，加快量化速度。
    ```python
-    import os
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
-    from quant_toolchain import quantize_model, save_quantized_model, load_quantized_model
-    from quant_toolchain.configs.dataset_utils import get_dataloader
-    from quant_toolchain.configs.get_config import get_awq_config
-    from accelerate import infer_auto_device_map
-    from accelerate.big_modeling import dispatch_model
-    from datasets import load_dataset, load_from_disk
+import os
+import gc
+import shutil
+import copy
+import time
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
+from quant_toolchain import quantize_model, save_quantized_model, load_quantized_model
+from quant_toolchain.configs.dataset_utils import get_dataloader, get_vlm_dataloader
+from quant_toolchain.configs.get_config import get_awq_config
+from quant_toolchain.utils import to_device
+from accelerate import infer_auto_device_map
+from accelerate.big_modeling import dispatch_model
+from datasets import load_dataset, load_from_disk
 
-    MODEL_PATH = "Qwen/Qwen2.5-VL-7B-Instruct"
+def awq_quant_vlm_llm():
+    MODEL_PATH = "/data/pipline/original_models/Qwen3-VL-4B-Instruct/"    
 
-    SAVE_PATH = "quantized_models/Qwen2.5-VL-7B-Instruct-AMTC-LM-AWQ"
-    
+    SAVE_PATH = "/data/pipline/quantized_models/Qwen3-VL-4B-Instruct-AMTC-LM-AWQ_test0.0.3"
     if not os.path.exists(SAVE_PATH): 
         os.makedirs(SAVE_PATH) 
         print(f"目录 {SAVE_PATH} 已创建")
     else:
         print(f"目录 {SAVE_PATH} 已存在")
-    model = AutoModelForImageTextToText.from_pretrained(MODEL_PATH, torch_dtype=torch.float16) 
+    model = AutoModelForImageTextToText.from_pretrained(MODEL_PATH, torch_dtype=torch.float16)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     processor = AutoProcessor.from_pretrained(MODEL_PATH)
+    
     messages = [
         {
             "role": "user",
@@ -249,51 +257,93 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
             ],
         }
     ]
-    # 如不使用gpu机器量化，这里to("cuda")改成to("cpu")
+
+    # Preparation for inference
     inputs = processor.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt"
-    ).to("cuda")
-
+    )
+    
+    inputs = inputs.to("cuda")
     device_map = infer_auto_device_map(model, offload_buffers=True)
     print("device_map:", device_map)
     dispatch_model(model, device_map=device_map, offload_buffers=True)
-
+    
     with torch.no_grad():
-        generated_ids = model.generate(**inputs, max_new_tokens=64, do_sample=False)
-    generated_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-    print("generated_text:")
-    print(generated_text[0])
+        generated_ids = model.generate(**inputs, max_new_tokens=128)
+    generated_ids_trimmed = [
+        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+    ]
+    output_text = processor.batch_decode(
+        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
+    print(output_text)
+    inputs = to_device(inputs, "cpu")
     model = model.cpu()
+    torch.cuda.empty_cache()
 
-    llm_model = model.language_model
-    # 以cnn_dailymail数据集为例，可以替换为其它代表性数据
-    dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
-    dataloader = get_dataloader(dataset, 
-                                tokenizer,
-                                max_sequence_length = 512,
-                                column = "article", 
-                                concat_data = True, 
-                                pad_to_max_length = False,
-                                num_max_orig_samples=128)
-
-    quant_config = get_awq_config(apply_clip=True)    
-    # 对语言模型进行量化
-    quantized_model = quantize_model(llm_model, quant_config, dataloader)
-    device_map = infer_auto_device_map(model, offload_buffers=True)
+    
+    DATASET_ID = "lmms-lab/flickr30k"
+    DATASET_SPLIT = "test[:512]"
+    ds = load_dataset(DATASET_ID, split=DATASET_SPLIT)
+    # 也可以加载本地数据集
+    # ds = load_dataset("/data/pipline/datasets/lmms-lab___flickr30k/", split=DATASET_SPLIT)
+    ds = ds.shuffle(seed=42)
+    dataloader = get_vlm_dataloader(ds, processor, 512, 2048, 1, False)
+    
+    quant_config = get_awq_config(apply_clip=True, is_vlm=True, fallback=[".*visual"])
+    
+    start_time = time.time()
+    quantized_model = quantize_model(model, quant_config, dataloader)
+    end_time = time.time()
+    print(f"Quantization time: {end_time - start_time}")
+    
+    device_map = infer_auto_device_map(quantized_model, offload_buffers=True)
     print("device_map:", device_map)
-    dispatch_model(model, device_map=device_map, offload_buffers=True)
+    dispatch_model(quantized_model, device_map=device_map, offload_buffers=True)
+    inputs = to_device(inputs, "cuda")
+    
+    with torch.no_grad():
+        generated_ids_0 = quantized_model.generate(**inputs, max_new_tokens=128)
+    generated_ids_trimmed = [
+        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids_0)
+    ]
+    output_text_0 = processor.batch_decode(
+        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
+    print(output_text_0)
+    inputs = to_device(inputs, "cpu")
+    
+    save_quantized_model(quantized_model, SAVE_PATH, tokenizer)
+    shutil.copy(MODEL_PATH + "preprocessor_config.json", os.path.join(SAVE_PATH, "preprocessor_config.json"))
+    shutil.copy(MODEL_PATH + "video_preprocessor_config.json", os.path.join(SAVE_PATH, "video_preprocessor_config.json"))
+    
+    quantized_model = quantized_model.cpu()
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    loaded_quantized_model = load_quantized_model(SAVE_PATH, auto_method=AutoModelForImageTextToText)
+    device_map = infer_auto_device_map(loaded_quantized_model, offload_buffers=True)
+    print("device_map:", device_map)
+    dispatch_model(loaded_quantized_model, device_map=device_map, offload_buffers=True)
+    inputs = to_device(inputs, "cuda")
 
     with torch.no_grad():
-        generated_ids_0 = model.generate(**inputs, max_new_tokens=64, do_sample=False)
-    generated_text_0 = tokenizer.batch_decode(generated_ids_0, skip_special_tokens=True)
-    print("generated_text_0:")
-    print(generated_text_0[0])
-    # 保存量化模型
-    save_quantized_model(model, SAVE_PATH, tokenizer)
+        generated_ids_1 = loaded_quantized_model.generate(**inputs, max_new_tokens=128)
+    generated_ids_trimmed = [
+        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids_1)
+    ]
+    output_text_1 = processor.batch_decode(
+        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
+    print(output_text_1)
+    
+    
+if __name__ == "__main__":
+    awq_quant_vlm_llm()
 
    ```
    
@@ -303,6 +353,7 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 
 量化完成后需执行以下命令进行格式转换。  
    ```shell
+   cd /opt/app/scripts
    python3 checkpoint_convert.py --src quantized_model_path --dst coverted_model_path --quant_type awq
    ```
 完成转换后即可进行模型编译或精度评估。
@@ -436,12 +487,12 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 - 启动模型评估脚本(Qwen3-1.7b为例):
     - 评估模型config：  
       ```yaml
-       eval_backend: VLMEvalKit
-        eval_config:
+      eval_backend: VLMEvalKit
+      eval_config:
         model: 
-            - type: Qwen3-1.7b-VL ##按照启动脚本的--model 来填
+            - type: Qwen3-4b-VL ##按照启动脚本的--model 来填
             name: CustomAPIModel 
-            api_base: http://localhost:9999/v1/chat/completions
+            api_base: http://localhost:8000/v1/chat/completions
             key: EMPTY
             temperature: 0.0
             img_size: -1
@@ -450,7 +501,7 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
         mode: all
         work_dir: outputs
         nproc: 16
-        use_cache: /tmp/test
+      use_cache: /tmp/test
       ```
     - 模型评估脚本启动：
       ```python
@@ -540,7 +591,7 @@ Qwen3-1.7B-AWQ-AOT/
 
 ### 视觉语言大模型
 
-基于``vLLM``的``Qwen2.5-VL-7B-Instruct``示例：
+以``Qwen3-VL-4b-AWQ``示例：
 
 ```python
 import os
@@ -903,20 +954,7 @@ Qwen3-VL-4b-AWQ-AOT_960x540_8192_4die_image_01230123$ tree
 
 若在使用产品过程中遇到问题，可以参考此文档。
 
-### 1. 编译失败提示类似缺少文件的提示。
-
-**问题描述**：
-
-当前版本的量化工具在量化结束（并格式转换）后可能会编译错误。原因是缺少一些文件，需要从原始模型目录拷贝过来。
-
-**解决方法**：
-
-一般根据编译时对应提示拷贝文件即可。
-举例说明：
-Qwen3-VL-4B-AWQ 缺少 preprocessor_config.json 文件;
-Qwen3-4B-AWQ 缺少 chat_template.jinja、merges.txt、tokenizer.json、tokenizer_config.json、vocab.json。
-
-### 2. 编译阶段出现 RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!
+### 1. 编译阶段出现 RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!
 
 **问题描述**：
 GPU环境须限制编译线程环境变量
@@ -924,7 +962,7 @@ GPU环境须限制编译线程环境变量
 **解决方法**：
 将 os.environ["COMPILE_THREAD"] 配置为 "1"即可解决。
 
-### 3. 编译阶段出现 Condition: status == DCL_ERROR_REPEAT_INITIALIZE failed
+### 2. 编译阶段出现 Condition: status == DCL_ERROR_REPEAT_INITIALIZE failed
 
 **问题描述**：
 检测到GPU设备时，编译脚本对全局设置有顺序要求
