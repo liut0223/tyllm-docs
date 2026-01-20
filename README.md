@@ -3,6 +3,20 @@
 # 更新说明
 
 本文记录了``Edge10``系列大模型工具链的变更情况。
+**202600115/v1.1.8**
+
+- 🚀更新版本v1.1.8
+- 🚀量化工具更新(v1.0.4)
+    - 支持AWQ\GPTQv2\Quarot量化方法
+- 🚀编译工具更新(v1.1.8)
+    - Qwen3 vl 8B vit性能优化
+    - 解决Qwen3 vl单Die编译问题
+    - vllm升级到0.11.0，解决min max pixel配置问题
+    - ubuntu升级到22.04
+    - 支持编译Die remap模型
+- 🚀更新大模型支持列表
+- 🚀更新量化工具使用说明
+- 🚀更新编译工具使用说明
 
 **20251128/v1.1.7**
 
@@ -42,39 +56,40 @@
 
 已经支持的模型如下（包括不限于）：
 
-| Model                                        | Quant Support | Compile Support |
+| Model (W4A16)                                | Quant Support | Compile Support |
 | :------------------------------------------- | :-----------: | :-------------: |
 | Qwen/Qwen3-VL-8B                             |      ✅       |       ✅        |
 | Qwen/Qwen3-VL-4B                             |      ✅       |       ✅        |
 | Qwen/Qwen3-VL-2B                             |      ✅       |       ✅        |
+| Qwen/Qwen3-32B                               |      ✅       |       ✅        |
 | Qwen/Qwen3-8B                                |      ✅       |       ✅        |
 | Qwen/Qwen3-4B                                |      ✅       |       ✅        |
 | Qwen/Qwen3-1.7B                              |      ✅       |       ✅        |
 | Qwen/Qwen2.5-VL-7B                           |      ✅       |       ✅        |
 | Qwen/Qwen2.5-VL-3B                           |      ✅       |       ✅        |
-| Qwen/Qwen2-VL-7B                             |      ❌       |       ✅        |
-| Qwen/Qwen2-7B                                |      ❌       |       ✅        |
-| Qwen/Qwen1.5-1.8B                            |      ❌       |       ✅        |
-| deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B    |      ❌       |       ✅        |
-| deepseek-ai/DeepSeek-R1-Distill-Qwen-7B      |      ❌       |       ✅        |
-| deepseek-ai/DeepSeek-R1-Distill-Qwen-32B     |      ❌       |       ✅        |
-| Llama3-8B                                    |      ❌       |       ✅        |
+| Qwen/Qwen2-VL-7B                             |      ❌       |       ❌        |
+| Qwen/Qwen2-7B                                |      ✅       |       ✅        |
+| Qwen/Qwen1.5-1.8B                            |      ❌       |       ❌        |
+| deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B    |      ✅       |       ✅        |
+| deepseek-ai/DeepSeek-R1-Distill-Qwen-7B      |      ✅       |       ✅        |
+| deepseek-ai/DeepSeek-R1-Distill-Qwen-32B     |      ✅       |       ✅        |
+| Llama3-8B                                    |      ❌       |       ❌        |
+<br>
 <br>
 
-# 快速开始
+# 一、环境准备
 
 本节介绍使用``TyLLM``工具链前的开发环境准备工作。``TyLLM``使用``Docker``容器进行工具链集成，用户可通过``Docker``加载``TyLLM``镜像文件，然后进行模型量化、编译、评估(未来)等工作，因此开发环境准备阶段需要正确安装``Docker``环境，同时目前需要量化阶段需要``GPU``来加速，以及多模态模型的编译依赖``vLLM``框架来推理，因此暂时需要``GPU``。
-
-## 环境准备
 
 - **Nvidia GPU**
 - **Nvidia Container Toolkit**
 - **Docker>19.03**
 
-### 安装Nvidia GPU 驱动
+### 1.1 安装Nvidia GPU 驱动
 
 ```shell
-sudo apt install nvidia-driver-530 # 驱动版本尽量选择最高（当前量化工具cuda-12.6,驱动建议安装580及以上）。
+# 驱动版本尽量选择最高（当前量化工具cuda-12.6,驱动建议安装580及以上）
+sudo apt install nvidia-driver-530 
 # 安装完成后，执行nvidia-smi命令显示如下，表示安装成功。
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.82.09              Driver Version: 580.82.09      CUDA Version: 13.0     |
@@ -97,14 +112,14 @@ sudo apt install nvidia-driver-530 # 驱动版本尽量选择最高（当前量�
 +---------------------------------------------------------------------------------------+
 ```
 
-### 安装Docker
+### 1.2 安装Docker
 
 ```shell
 sudo apt install docker.io
 sudo docker -v
 ```
 
-### 安装Nvidia Container Toolkit
+### 1.3 安装Nvidia Container Toolkit
 
 添加包仓库和``GPG key``:
 ```shell
@@ -122,36 +137,23 @@ sudo apt update
 sudo apt install nvidia-container-toolkit
 ```
 
-### 安装TyQuant量化工具
+### 1.4 安装TyQuant量化工具
 
-量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.0.3``：
+量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.0.4``：
 
 ```shell
 sudo docker login 113.100.143.90:8091 -u custom -p DE@sz_intellif_2021
 sudo docker pull 113.100.143.90:8091/edgex/tyquantize:${version}
 ```
 
-### 启动量化工具镜像
 
-以下命令创建容器，其中``${your_data_dir}``表示宿主机中用户数据目录，``${version}``需改为实际版本``tag``。
-```shell
-sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edgex/tyquantize:${version} bash
-```
+### 1.5 安装TyLLM工具链
 
-### 安装TyLLM工具链
-
-编译工具链获取途径如下，请务必将``${version}``替换为实际对应的工具链版本号，比如``v1.1.7``：
+编译工具链获取途径如下，请务必将``${version}``替换为实际对应的工具链版本号，比如``v1.1.8``：
 
 ```shell
 sudo docker login 113.100.143.90:8091 -u custom -p DE@sz_intellif_2021
 sudo docker pull 113.100.143.90:8091/edgex/tyllm:${version}
-```
-
-### 启动工具链镜像
-
-以下命令创建容器，其中``${your_data_dir}``表示宿主机中用户数据目录，``${version}``需改为实际版本``tag``。
-```shell
-sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edgex/tyllm:${version} bash
 ```
 
 > **注意**
@@ -165,58 +167,126 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 >  ```
 > 修改后，重启``docker``生效，``sudo systemctl restart docker``
 
+---
+<br>
+<br>
 
+# 二、模型量化
 
-## 模型量化
+必须在带有GPU的主机量化以加快速度。
 
-务必使用带GPU的主机加快量化速度。
+## 2.1 启动量化工具镜像
 
-### 量化示例1-LLM模型
+以下命令创建容器，其中``${your_data_dir}``表示宿主机中用户数据目录，``${version}``需改为实际版本``tag``。
+```shell
+sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edgex/tyquantize:${version} bash
+```
+> 注意：完整量化参考样例文件位于容器内 `/opt` 目录下
 
-以Qwen3-1.7B为例，目前暂时仅支持AWQ方式量化
-   ```python
-   import torch
-   from transformers import AutoModelForCausalLM, AutoTokenizer
-   from quant_toolchain import (
-       get_awq_config,
-       get_dataloader,
-       quantize_model,
-       save_quantized_model,
-   )
-   from datasets import load_dataset
+## 2.2 量化模型指标评估专属环境（w4a8 必用）
+官方vllm不支持w4a8量化模型，需使用定制镜像，创建容器如下：
+镜像地址：`192.168.14.129:80/library/aied/custom-vllm:0.11.0`
+创建容器命令：
+```bash
+docker run -it --name vllm_custom --gpus all -v  /data/:/data/ --ipc host  -p 8001:8000 --shm-size 16g 192.168.14.129:80/library/aied/custom-vllm:0.11.0 bash
+```
 
-   # 准备模型
-   org_model_path = "Qwen3-1.7B"
-   dst_model_path = "Qwen3-1.7B-AMTC-AWQ"
-   model = AutoModelForCausalLM.from_pretrained(org_model_path, torch_dtype=torch.float16)
-   tokenizer = AutoTokenizer.from_pretrained(org_model_path)
+## 2.3 支持的量化算法
+#### AWQ 量化算法
+- 论文地址：https://arxiv.org/pdf/2306.00978
+- 支持精度：Wi4Af16
+- 权重量化：✅ 非对称量化
+- 激活值量化：❌ 不量化、❌ 无动态量化
+- Attention量化：❌ 不量化
+- 推荐硬件配置
+  - Qwen3-8B/14B：A800 / 4090 * 1
+  - Qwen3-32B：A800 / 4090 * 1
 
-   # 准备校准数据（可替换为自有数据）
-   dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
-   dataloader = get_dataloader(
-       dataset,
-       tokenizer,
-       num_max_orig_samples=128,
-       max_sequence_length=512,
-       column="article",
-       concat_data=True,
-       pad_to_max_length=False,
-   )
+#### GPTQv2 量化算法
+- 论文地址：https://arxiv.org/abs/2504.02692
+- 支持精度：Wi4Ai8、Wi8Ai8、Wi4Af16
+- 权重量化：✅ 均支持非对称量化
+- 激活值量化：❌ 非对称量化；✅ 支持int8动态/静态量化
+- Attention量化：❌ 不量化
+- 推荐硬件配置：4090 * 1（支持Qwen3-32B）
 
-   # 配置量化超参并生成量化模型
-   quant_config = get_awq_config()
-   quantized_model = quantize_model(model, quant_config, dataloader)
+#### OSTQuant+GPTQv2 量化算法
+- 论文地址：https://arxiv.org/abs/2501.13987
+- 支持精度：Wi4Ai8
+- 权重量化：❌ 非对称量化
+- 激活值量化：❌ 非对称量化；✅ 动态量化
+- Attention量化：❌ 不量化
+- 推荐硬件配置（Qwen3-32B）
+  - 分布式训练阶段：A800*8
+  - 实量化阶段（GPTQv2）：A800*1 或 4090*1
+- 核心说明：分**分布式训练+实量化**两个阶段执行
 
-   # 保存量化模型
-   save_quantized_model(quantized_model, dst_model_path, tokenizer)
-   ```
+#### Quarot 量化算法
+- 论文地址：https://arxiv.org/pdf/2404.00456
+- 支持精度：Wi4Ai8
+- 权重量化：✅ 对称量化
+- 激活值量化：✅ 对称量化；✅ 动态量化
+- Attention量化：❌ 不量化
+- 推荐硬件配置：4090（支持Qwen3-32B）
 
-### 量化示例2-VLM模型
+---
+## 2.4 量化示例
+### 2.4.1 AWQ 量化示例 - LLM（以 Qwen3-32B 为例）
+```python
+# awq_example.py
+import os
+import torch
+import pytest
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from quant_toolchain import quantize_model
+from quant_toolchain import get_dataloader
+from quant_toolchain import get_awq_config
+from accelerate import infer_auto_device_map
+from accelerate.big_modeling import dispatch_model
+from datasets import load_dataset
 
-以Qwen3-vl-4B为例，目前暂时仅支持VLM多模态模型的language mdoel的AWQ方式量化，visual model的AWQ量化暂时不支持。
+# 准备模型
+model = AutoModelForCausalLM.from_pretrained("Qwen3-32B", torch_dtype=torch.float16)
+tokenizer = AutoTokenizer.from_pretrained("Qwen3-32B")
 
-建议使用gpu机器进行，加快量化速度。
-   ```python
+# 准备校准数据
+dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
+dataloader = get_dataloader(dataset, 
+                            tokenizer,
+                            num_max_orig_samples = 128,
+                            max_sequence_length = 512,
+                            column = "article", 
+                            concat_data = True, 
+                            pad_to_max_length = False)
+# 配置量化超参
+quant_config = get_awq_config()
+# 生成量化模型    
+quantized_model = quantize_model(model, quant_config, dataloader)
+
+# 保存量化模型
+save_quantized_model(quantized_model, "save_quantized_model", tokenizer)
+
+# 量化模型推理，评估效果
+dispatch_model(quantized_model, device_map=None, offload_buffers=True)    
+prompt = "Who are you?"
+messages = [
+    {"role": "user", "content": prompt}
+]
+text = tokenizer.apply_chat_template(
+                                     messages,
+                                     tokenize=False,
+                                     add_generation_prompt=True,
+                                     enable_thinking=True
+                                    )
+inputs = tokenizer([text], return_tensors="pt").to("cuda")
+with torch.no_grad():
+    generated_ids = model.generate(**inputs, max_new_tokens=32, do_sample=False)
+generated_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+print(generated_text[0])
+```
+
+### 2.4.2 AWQ 量化 - VLM（以 Qwen3-VL-4B 为例）
+```python
 import os
 import gc
 import shutil
@@ -224,306 +294,558 @@ import copy
 import time
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
-from quant_toolchain import quantize_model, save_quantized_model, load_quantized_model
+from quant_toolchain import quantize_model, save_quantized_model
 from quant_toolchain.configs.dataset_utils import get_dataloader, get_vlm_dataloader
 from quant_toolchain.configs.get_config import get_awq_config
-from quant_toolchain.utils import to_device
+from quant_toolchain.utils import to_device, copy_missing_files
 from accelerate import infer_auto_device_map
 from accelerate.big_modeling import dispatch_model
 from datasets import load_dataset, load_from_disk
 
-def awq_quant_vlm_llm():
-    MODEL_PATH = "/data/pipline/original_models/Qwen3-VL-4B-Instruct/"    
+MODEL_PATH = "/nfs/AIED/qiujingkai/hf_models/Qwen3-VL-4B-Instruct/"
 
-    SAVE_PATH = "/data/pipline/quantized_models/Qwen3-VL-4B-Instruct-AMTC-LM-AWQ_test0.0.3"
-    if not os.path.exists(SAVE_PATH): 
-        os.makedirs(SAVE_PATH) 
-        print(f"目录 {SAVE_PATH} 已创建")
-    else:
-        print(f"目录 {SAVE_PATH} 已存在")
-    model = AutoModelForImageTextToText.from_pretrained(MODEL_PATH, torch_dtype=torch.float16)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    processor = AutoProcessor.from_pretrained(MODEL_PATH)
-    
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "image": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
-                },
-                {"type": "text", "text": "Describe this image."},
-            ],
-        }
-    ]
+model = AutoModelForImageTextToText.from_pretrained(MODEL_PATH, torch_dtype=torch.float16)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+processor = AutoProcessor.from_pretrained(MODEL_PATH)
 
-    # Preparation for inference
-    inputs = processor.apply_chat_template(
-        messages,
-        tokenize=True,
-        add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt"
-    )
-    
-    inputs = inputs.to("cuda")
-    device_map = infer_auto_device_map(model, offload_buffers=True)
-    print("device_map:", device_map)
-    dispatch_model(model, device_map=device_map, offload_buffers=True)
-    
-    with torch.no_grad():
-        generated_ids = model.generate(**inputs, max_new_tokens=128)
-    generated_ids_trimmed = [
-        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-    ]
-    output_text = processor.batch_decode(
-        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-    )
-    print(output_text)
-    inputs = to_device(inputs, "cpu")
-    model = model.cpu()
-    torch.cuda.empty_cache()
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {
+                "type": "image",
+                "image": "/nfs/AIED/qiujingkai/git_proj/quant_toolchain/logs/demo.jpeg",
+            },
+            {"type": "text", "text": "Describe this image."},
+        ],
+    }
+]
 
+# Preparation for inference
+inputs = processor.apply_chat_template(
+    messages,
+    tokenize=True,
+    add_generation_prompt=True,
+    return_dict=True,
+    return_tensors="pt"
+)
+
+inputs = inputs.to("cuda")
+device_map = infer_auto_device_map(model, offload_buffers=True)
+print("device_map:", device_map)
+dispatch_model(model, device_map=device_map, offload_buffers=True)
+
+with torch.no_grad():
+    generated_ids = model.generate(**inputs, max_new_tokens=128)
+generated_ids_trimmed = [
+    out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+]
+output_text = processor.batch_decode(
+    generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+)
+print(output_text)
+inputs = to_device(inputs, "cpu")
+model = model.cpu()
+torch.cuda.empty_cache()
+
+DATASET_ID = "lmms-lab/flickr30k"
+DATASET_SPLIT = "test[:512]"
+ds = load_dataset(DATASET_ID, split=DATASET_SPLIT)
+ds = ds.shuffle(seed=42)
+dataloader = get_vlm_dataloader(ds, processor, 512, 2048, 1, False)
+
+quant_config = get_awq_config(apply_clip=True, is_vlm=True, fallback=[".*visual"])
+
+start_time = time.time()
+quantized_model = quantize_model(model, quant_config, dataloader)
+end_time = time.time()
+print(f"Quantization time: {end_time - start_time}")
+
+device_map = infer_auto_device_map(quantized_model, offload_buffers=True)
+print("device_map:", device_map)
+dispatch_model(quantized_model, device_map=device_map, offload_buffers=True)
+inputs = to_device(inputs, "cuda")
+
+with torch.no_grad():
+    generated_ids_0 = quantized_model.generate(**inputs, max_new_tokens=128)
+generated_ids_trimmed = [
+    out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids_0)
+]
+output_text_0 = processor.batch_decode(
+    generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+)
+print(output_text_0)
+inputs = to_device(inputs, "cpu")
+
+SAVE_PATH = "quantized_model"
+save_quantized_model(quantized_model, SAVE_PATH, tokenizer)
+copy_missing_files(MODEL_PATH, SAVE_PATH)
+```
+
+### 2.4.3 GPTQv2 量化（支持 Qwen3-32B）
+```python
+# scripts/gptqv2_qwen3_32b.py
+import gc
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from quant_toolchain import quantize_model, save_quantized_model, load_quantized_model
+from quant_toolchain.configs.dataset_utils import get_dataloader
+from quant_toolchain.configs.get_config import get_gptqv2_config
+from accelerate import infer_auto_device_map
+from accelerate.big_modeling import dispatch_model
+from datasets import load_dataset, load_from_disk
+from accelerate import init_empty_weights
+import shutil, os
+
+def gptqv2_quant_e2e():
+    model_path = "/data/pipline/original_models/Qwen3-32B/"
+    SAVE_PATH = "../work_dir/Qwen3-4B_gptqv2"
     
-    DATASET_ID = "lmms-lab/flickr30k"
-    DATASET_SPLIT = "test[:512]"
-    ds = load_dataset(DATASET_ID, split=DATASET_SPLIT)
-    # 也可以加载本地数据集
-    # ds = load_dataset("/data/pipline/datasets/lmms-lab___flickr30k/", split=DATASET_SPLIT)
-    ds = ds.shuffle(seed=42)
-    dataloader = get_vlm_dataloader(ds, processor, 512, 2048, 1, False)
+    model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16) # on CPU
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
     
-    quant_config = get_awq_config(apply_clip=True, is_vlm=True, fallback=[".*visual"])
-    
-    start_time = time.time()
+    dataset_path = "/data/pipline/datasets/wikitext2/wikitext2/"
+    dataset = load_from_disk(dataset_path)
+    dataloader = get_dataloader(dataset, 
+                                tokenizer,
+                                num_samples = 128,
+                                max_sequence_length = 128,
+                                concat_data = True, 
+                                pad_to_max_length = False)
+
+    quant_config = get_gptqv2_config(online_rotate_tp = 16)
     quantized_model = quantize_model(model, quant_config, dataloader)
-    end_time = time.time()
-    print(f"Quantization time: {end_time - start_time}")
+    
+    prompt = "Who are you?"
+    messages = [
+        {"role": "user", "content": prompt}
+    ]
+    text = tokenizer.apply_chat_template(
+                                         messages,
+                                         tokenize=False,
+                                         add_generation_prompt=True,
+                                         enable_thinking=True
+                                        )
+    inputs = tokenizer([text], return_tensors="pt").to("cuda")
     
     device_map = infer_auto_device_map(quantized_model, offload_buffers=True)
     print("device_map:", device_map)
     dispatch_model(quantized_model, device_map=device_map, offload_buffers=True)
-    inputs = to_device(inputs, "cuda")
     
     with torch.no_grad():
-        generated_ids_0 = quantized_model.generate(**inputs, max_new_tokens=128)
-    generated_ids_trimmed = [
-        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids_0)
+        generated_ids_0 = quantized_model.generate(**inputs, max_new_tokens=256, do_sample=False)
+    generated_text_0 = tokenizer.batch_decode(generated_ids_0, skip_special_tokens=True)
+    print("generated_text_0:")
+    print(generated_text_0[0])
+    
+    save_quantized_model(quantized_model, SAVE_PATH)
+    shutil.copy(model_path + "vocab.json", os.path.join(SAVE_PATH, "vocab.json"))
+    shutil.copy(model_path + "merges.txt", os.path.join(SAVE_PATH, "merges.txt"))
+    shutil.copy(model_path + "tokenizer.json", os.path.join(SAVE_PATH, "tokenizer.json"))
+    shutil.copy(model_path + "tokenizer_config.json", os.path.join(SAVE_PATH, "tokenizer_config.json"))
+    
+    del quantized_model
+    gc.collect()
+    torch.cuda.empty_cache()    
+    
+if __name__ == "__main__":
+    gptqv2_quant_e2e()
+```
+
+### 2.4.4 OSTQuant+GPTQv2 量化（两阶段，支持 Qwen3-32B）
+#### 第一阶段：分布式训练阶段
+```python
+# scripts/test_ost_quant_train_stage.py
+import os
+import torch
+from datasets import load_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from quant_toolchain.configs.dataset_utils import get_dataloader
+from quant_toolchain.configs.get_config import get_ost_quant_config
+from quant_toolchain import train_ostquant_intermediate_model, save_ostquant_intermediate_model, load_ostquant_intermediate_model
+from accelerate import init_empty_weights
+from accelerate import infer_auto_device_map
+from accelerate.big_modeling import dispatch_model
+
+from quant_toolchain import quantize_model, save_quantized_model, load_quantized_model
+from quant_toolchain.configs.dataset_utils import get_dataloader
+from quant_toolchain.configs.get_config import get_gptqv2_config
+from quant_toolchain import load_ostquant_intermediate_model
+from accelerate import infer_auto_device_map
+from accelerate.big_modeling import dispatch_model
+from datasets import load_dataset, load_from_disk
+import gc
+import shutil
+
+MODEL_PATH = "/data/pipline/original_models/Qwen3-32B/"
+def test_ost_quant_train_stage():
+    SAVE_PATH = "../work_dir/Qwen3-32B_ost"
+    model = AutoModelForCausalLM.from_pretrained(MODEL_PATH,
+                                                 torch_dtype="auto",
+                                                 device_map="cpu",
+                                                 low_cpu_mem_usage=True
+                                                 )
+        
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+    tokenizer.add_eos_token = False
+    tokenizer.add_bos_token = False
+    tokenizer.padding_side = "right"
+    
+    print("model load")
+    
+    train_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
+    train_dataloader = get_dataloader(train_dataset, 
+                                      tokenizer,
+                                      num_samples = None,
+                                      max_sequence_length = 128,
+                                      column = "text", 
+                                      concat_data = True, 
+                                      pad_to_max_length = False)
+    
+    
+    eval_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+    eval_dataloader = get_dataloader(eval_dataset, 
+                                     tokenizer,
+                                     num_samples = None,
+                                     max_sequence_length = 128,
+                                     column = "text", 
+                                     concat_data = True, 
+                                     pad_to_max_length = False)
+    
+    print("dataset load")
+    
+    ost_quant_config = get_ost_quant_config(max_steps=100,
+                                            enable_evaluate=True,
+                                            gradient_accumulation_steps=2,
+                                            per_device_train_batch_size=1,
+                                            per_device_eval_batch_size=1,
+                                            online_rotate_tp=16)
+    
+    trained_model = train_ostquant_intermediate_model(
+                                                      float_model=model,
+                                                      quant_config=ost_quant_config,
+                                                      dataloader_for_train=train_dataloader,
+                                                      dataloader_for_eval=eval_dataloader
+                                                     )
+    save_ostquant_intermediate_model(trained_model, tokenizer, SAVE_PATH)
+    print(trained_model)
+
+    device_map = infer_auto_device_map(trained_model, offload_buffers=True)
+    print("device_map:", device_map)
+    dispatch_model(trained_model, device_map=device_map, offload_buffers=True)
+    
+    prompt = "Who are you?"
+    messages = [
+        {"role": "user", "content": prompt}
     ]
-    output_text_0 = processor.batch_decode(
-        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-    )
-    print(output_text_0)
-    inputs = to_device(inputs, "cpu")
+    text = tokenizer.apply_chat_template(
+                                         messages,
+                                         tokenize=False,
+                                         add_generation_prompt=True,
+                                         enable_thinking=True
+                                        )
+    inputs = tokenizer([text], return_tensors="pt").to("cuda")
     
-    save_quantized_model(quantized_model, SAVE_PATH, tokenizer)
-    shutil.copy(MODEL_PATH + "preprocessor_config.json", os.path.join(SAVE_PATH, "preprocessor_config.json"))
-    shutil.copy(MODEL_PATH + "video_preprocessor_config.json", os.path.join(SAVE_PATH, "video_preprocessor_config.json"))
+    with torch.no_grad():
+        generated_ids = trained_model.generate(**inputs, max_new_tokens=32, do_sample=False)
     
-    quantized_model = quantized_model.cpu()
+    generated_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+    print(generated_text[0])
+```
+分布式启动命令：
+```bash
+torchrun   --nnodes=1   --nproc_per_node=8  --node_rank=0   --master_port=8899 test_ost_quant_train_stage.py
+```
+
+#### 第二阶段：实量化阶段（基于GPTQv2）
+```python
+def quant_second_stage():
+    TRAINED_MODEL_PATH = "../work_dir/Qwen3-32B_ost"
+    tokenizer = AutoTokenizer.from_pretrained(TRAINED_MODEL_PATH)
+    trained_model = load_ostquant_intermediate_model(TRAINED_MODEL_PATH)
+
+    dataset_path = "/data/pipline/datasets/wikitext2/wikitext2/"
+    dataset = load_from_disk(dataset_path)
+    dataloader = get_dataloader(dataset, 
+                                tokenizer,
+                                num_samples = 128,
+                                max_sequence_length = 128,
+                                concat_data = True, 
+                                pad_to_max_length = False)
+
+    quant_config = get_gptqv2_config(online_rotate_tp=16)
+    quantized_model = quantize_model(trained_model, quant_config, dataloader)
+    print(quantized_model)
+
+    prompt = "Who are you?"
+    messages = [
+        {"role": "user", "content": prompt}
+    ]
+    text = tokenizer.apply_chat_template(
+                                            messages,
+                                            tokenize=False,
+                                            add_generation_prompt=True,
+                                            enable_thinking=True
+                                        )
+    inputs = tokenizer([text], return_tensors="pt").to("cuda")
+
+    device_map = infer_auto_device_map(quantized_model, offload_buffers=True)
+    print("device_map:", device_map)
+    dispatch_model(quantized_model, device_map=device_map, offload_buffers=True)
+
+    with torch.no_grad():
+        generated_ids_0 = quantized_model.generate(**inputs, max_new_tokens=256, do_sample=False)
+    generated_text_0 = tokenizer.batch_decode(generated_ids_0, skip_special_tokens=True)
+    print("generated_text_0:")
+    print(generated_text_0[0])
+
+    SAVE_PATH = TRAINED_MODEL_PATH+"_gptqv2"
+    save_quantized_model(quantized_model, SAVE_PATH)
+
+    shutil.copy(MODEL_PATH + "vocab.json", os.path.join(SAVE_PATH, "vocab.json"))
+    shutil.copy(MODEL_PATH + "merges.txt", os.path.join(SAVE_PATH, "merges.txt"))
+    shutil.copy(MODEL_PATH + "tokenizer.json", os.path.join(SAVE_PATH, "tokenizer.json"))
+    shutil.copy(MODEL_PATH + "tokenizer_config.json", os.path.join(SAVE_PATH, "tokenizer_config.json"))
+    
+    del quantized_model
     gc.collect()
     torch.cuda.empty_cache()
 
-    loaded_quantized_model = load_quantized_model(SAVE_PATH, auto_method=AutoModelForImageTextToText)
+    loaded_quantized_model = load_quantized_model(SAVE_PATH)
+    print(loaded_quantized_model)
     device_map = infer_auto_device_map(loaded_quantized_model, offload_buffers=True)
     print("device_map:", device_map)
     dispatch_model(loaded_quantized_model, device_map=device_map, offload_buffers=True)
-    inputs = to_device(inputs, "cuda")
 
     with torch.no_grad():
-        generated_ids_1 = loaded_quantized_model.generate(**inputs, max_new_tokens=128)
-    generated_ids_trimmed = [
-        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids_1)
-    ]
-    output_text_1 = processor.batch_decode(
-        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        generated_ids_1 = loaded_quantized_model.generate(**inputs, max_new_tokens=256, do_sample=False)
+    generated_text_1 = tokenizer.batch_decode(generated_ids_1, skip_special_tokens=True)
+    print("generated_text_1:")
+    print(generated_text_1[0])
+```
+
+### 2.4.5 Quarot 量化（支持 Qwen3-32B）
+```python
+# scripts/test_qwen3_quarot_e2e.py
+import os
+import torch
+import gc
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+from quant_toolchain.configs.get_config import get_quarot_config
+from quant_toolchain import quantize_model
+from accelerate import infer_auto_device_map
+from accelerate.big_modeling import dispatch_model
+from torch.distributed import init_process_group, destroy_process_group
+from quant_toolchain.utils import init_ddp, deinit_ddp
+from quant_toolchain import save_quantized_model, load_quantized_model
+from quant_toolchain.utils import auto_dispatch_model
+
+def test_quarot_e2e():
+    if not torch.cuda.is_available():
+        print("no gpus")
+        return
+    model_path = "/data/pipline/original_models/Qwen3-32B"
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        torch_dtype=torch.bfloat16,
+        trust_remote_code=True,
+        low_cpu_mem_usage=True,
     )
-    print(output_text_1)
-    
-    
+    print(model)
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+    config = get_quarot_config()
+    print("quarot config:", config)
+    model = auto_dispatch_model(model, safe_margin=0.1, num_gpus=2)
+    quantized_model = quantize_model(
+        float_model=model, quant_config=config, dataloader=None
+    )
+    print("量化成功")
+
+    save_path = "Qwen3-32B-Quarot-all"
+
+    os.makedirs(save_path, exist_ok=True)
+    save_quantized_model(quantized_model, save_path, tokenizer)
+    print("量化模型保存成功")
+
+    del quantized_model
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    loaded_quantized_model = load_quantized_model(save_path)
+    print("量化模型加载成功")
+
 if __name__ == "__main__":
-    awq_quant_vlm_llm()
+    test_quarot_e2e()
+```
 
-   ```
-   
+---
 
-   
-### 格式转换
+## 2.5 量化模型格式转换 & 指标评估
+### 2.5.1 量化模型格式转换
+根据量化精度不同，执行对应的转换命令，生成可部署的量化模型文件
+#### ✅ w4a16 精度转换
+```bash
+python3 checkpoint_convert.py --src /llmodels/Qwen3-32B_ostquant_gptqv2/  --dst /llmodels/Qwen3-32B_ostquant_gptqv2_1 --quant_type awq
+```
+#### ✅ w4a8 精度转换
+```bash
+python3 checkpoint_convert.py --src /llmodels/Qwen3-32B_ostquant_gptqv2/  --dst /llmodels/Qwen3-32B_ostquant_gptqv2_1 --quant_type awq_triton_w4a8
+```
 
-量化完成后需执行以下命令进行格式转换。  
-   ```shell
-   cd /opt/app/scripts
-   python3 checkpoint_convert.py --src quantized_model_path --dst coverted_model_path --quant_type awq
-   ```
-完成转换后即可进行模型编译或精度评估。
+### 2.5.2 量化模型指标评估
+#### 步骤1：进入vllm定制容器，启动vllm服务
+```bash
+# 进入容器
+docker exec -it vllm_custom bash
+# 指定GPU
+export CUDA_VISIBLE_DEVICES=4,5,6,7 
+# 启动vllm openai接口服务
+python3 -m vllm.entrypoints.openai.api_server --model /data/llmodels/Qwen3-32B_ostquant_gptqv2_1 --tensor-parallel-size 4 --served-model-name qwen3-32b --trust-remote-code  --dtype float16 --max-model-len 8192 --gpu-memory-utilization 0.5 --max-num-seqs 16   --quantization awq_triton_w4a8 --port 8000
+```
 
+#### 步骤2：容器外执行评估框架（evalscope）
+```python
+from evalscope import TaskConfig, run_task
 
-### 精度评估
-- EvalScope官方链接：
-    https://evalscope.readthedocs.io/zh-cn/latest/index.html
-- 安装与依赖：  
-   - vllm 0.11.0 安装
-      ```shell
-        conda create -n vllm python=3.10
-        conda activate vllm
-        pip install vllm
-      ```
-   - EvalScope安装
-      ```shell
-        conda create -n evalscope python=3.10
-        conda activate evalscope
-        pip install 'evalscope[all]'
-      ```
-#### LLM模型评估
+task_cfg = TaskConfig(
+    model='qwen3-32b',
+    api_url='http://127.0.0.1:8001/v1/chat/completions',
+    eval_type='openai_api',
+    datasets=['mmlu'],    
+    eval_batch_size=32,
+    generation_config={
+        'max_tokens': 8192,  # 最大生成token数，建议设置为较大值避免输出截断
+        'temperature': 0.7,  # 采样温度 (qwen 报告推荐值)
+        'top_p': 0.8,  # top-p采样 (qwen 报告推荐值)
+        'top_k': 20,  # top-k采样 (qwen 报告推荐值)
+        'n': 1,  # 每个请求产生的回复数量
+        'extra_body':{'chat_template_kwargs': {'enable_thinking': False}}  # 关闭思考模式
+    },
+    timeout=60000,  # 超时时间
+    stream=True,  # 是否使用流式输出
+    # limit=1000,  # 设置为1000条数据进行测试
+)
 
-- 启动vllm模型(Qwen3-1.7b为例)：
-    - 浮点模型启动
-      ```shell
-        export LLM_USE_MODELSCOPE=True 
-        export CUDA_VISIBLE_DEVICES=0,1
-        python -m vllm.entrypoints.openai.api_server \
-        --model Qwen3-1.7b \
-        --served-model-name qwen3 \
-        --trust-remote-code \
-        --dtype float16 \
-        --max-model-len 8196 \
-        --gpu-memory-utilization 0.5 \
-        --max-num-seqs 16 \
-        --port 8000
-      ```
-    - 量化模型启动
-      ```shell
-        export LLM_USE_MODELSCOPE=True 
-        export CUDA_VISIBLE_DEVICES=2,3
-        python -m vllm.entrypoints.openai.api_server \
-        --model Qwen3-1.7b-AMTC-AWQ \
-        --quantization awq \
-        --served-model-name qwen3_awq \
-        --trust-remote-code \
-        --dtype float16 \
-        --max-model-len 8196 \
-        --gpu-memory-utilization 0.5 \
-        --max-num-seqs 16 \
-        --port 8001
-      ```
-- 启动模型评估脚本(Qwen3-1.7b为例):
-    - 模型评估脚本启动：
-      ```python
-      from evalscope import TaskConfig, run_task
+run_task(task_cfg=task_cfg)
+```
 
-      # 以浮点模型为例，量化模型需修改model和api_url端口
-      task_cfg = TaskConfig(
-        model='qwen3',  # 量化模型使用model='qwen3_awq'
-        api_url='http://127.0.0.1:8000/v1/chat/completions',  #量化模型使用api_url='http://127.0.0.1:8001/v1/chat/completions'
-        eval_type='openai_api',
-        datasets=['mmlu'],    
-        eval_batch_size=32,
-        generation_config={
-            'max_tokens': 2048,  # 最大生成token数，建议设置为较大值避免输出截断
-            'temperature': 0.7,  # 采样温度 (qwen 报告推荐值)
-            'top_p': 0.8,  # top-p采样 (qwen 报告推荐值)
-            'top_k': 20,  # top-k采样 (qwen 报告推荐值)
-            'n': 1,  # 每个请求产生的回复数量
-            'extra_body':{'chat_template_kwargs': {'enable_thinking': False}}  # 关闭思考模式
+---
+
+## 2.6、编译前置注意事项
+### 2.6.1 编译前置说明
+- ✅ w4a16 模型：格式转换后 **可直接编译**，无需修改配置
+- ✅ w4a8 模型：**必须修改config.json配置文件** 后才能编译，是核心前置步骤
+
+### 2.6.2 w4a8 模型 config.json 配置修改
+打开转换后的模型目录下的 `Qwen3-32B_ostquant_gptqv2_1/config.json`，替换为以下完整内容：
+```json
+{
+    "architectures": [
+        "Qwen3ForCausalLM"
+    ],
+    "attention_bias": false,
+    "attention_dropout": 0.0,
+    "bos_token_id": 151643,
+    "eos_token_id": 151645,
+    "head_dim": 128,
+    "hidden_act": "silu",
+    "hidden_size": 5120,
+    "initializer_range": 0.02,
+    "intermediate_size": 25600,
+    "max_position_embeddings": 40960,
+    "max_window_layers": 64,
+    "model_type": "qwen3",
+    "num_attention_heads": 64,
+    "num_hidden_layers": 64,
+    "num_key_value_heads": 8,
+    "rms_norm_eps": 1e-06,
+    "rope_scaling": null,
+    "rope_theta": 1000000,
+    "sliding_window": null,
+    "tie_word_embeddings": false,
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.51.3",
+    "use_cache": false,
+    "use_sliding_window": false,
+    "vocab_size": 151936,
+    "quantization_config": {
+        "config_groups": {
+            "group_0": {
+                "input_activations": {
+                    "actorder": null,
+                    "block_structure": null,
+                    "dynamic": true,
+                    "group_size": null,
+                    "num_bits": 8,
+                    "observer": null,
+                    "observer_kwargs": {},
+                    "strategy": "token",
+                    "symmetric": true,
+                    "type": "int"
+                },
+                "output_activations": null,
+                "targets": [
+                    "Linear"
+                ],
+                "weights": {
+                    "actorder": null,
+                    "block_structure": null,
+                    "dynamic": false,
+                    "group_size": null,
+                    "num_bits": 8,
+                    "observer": "mse",
+                    "observer_kwargs": {},
+                    "strategy": "channel",
+                    "symmetric": true,
+                    "type": "int"
+                }
+            }
         },
-        timeout=60000,  # 超时时间
-        stream=True,  # 是否使用流式输出
-        # limit=1000,  # 设置为1000条数据进行测试
-      )
-      run_task(task_cfg=task_cfg)
-      ```
-- LLM 精度基准暂以全量 MMLU 数据集为测试集:
-    - 浮点模型结果：
-        ```shell
-       ——————————————————————————————————————————————————————————————————————
-       | Model   | Dataset   | Metric   | Subset   |   Num |   Score | Cat.0       
-       | qwen3   | mmlu      | mean_acc | OVERALL  | 14042 |  0.6224 | -         
-       ______________________________________________________________________
-        ```
-    - 量化模型结果：
-        ```shell
-       ——————————————————————————————————————————————————————————————————————
-       | Model   | Dataset   | Metric   | Subset   |   Num |   Score | Cat.0       
-       | qwen3   | mmlu      | mean_acc | OVERALL  | 14042 |  0.5901 | -                 
-       ______________________________________________________________________
-        ```
+        "format": "int-quantized",
+        "global_compression_ratio": null,
+        "ignore": [
+            "lm_head"
+        ],
+        "kv_cache_scheme": null,
+        "quant_method": "compressed-tensors",
+        "quantization_status": "compressed"
+    },
+    "online-rotate": {
+        "online_full_had": true,
+        "tp_size": 16
+    }
+}
+```
 
+### 2.6.2 重要注意事项
+1. Qwen3-32B 模型的 `config.json` 中 `max_position_embeddings: 40960`，编译时只能设置**低于40960**的cache len，更长上下文推理问题将在后期版本修复。
+2. 在X6000设备上运行Qwen3-32B编译后模型，需要手动拷贝原模型的tokenizer相关文件到编译目录：
+    ```bash
+    cp /data/pipline/original_models/Qwen3-32B/vocab.json /data/pipline/compiled_models2026/目标编译目录/16die/
+    cp /data/pipline/original_models/Qwen3-32B/tokenizer* /data/pipline/compiled_models2026/目标编译目录/16die/
+    cp /data/pipline/original_models/Qwen3-32B/merges.txt /data/pipline/compiled_models2026/目标编译目录/16die/
+    cp /data/pipline/original_models/Qwen3-32B/configuration.json /data/pipline/compiled_models2026/目标编译目录/16die/
+    ```
+3. 所有量化算法均不支持Attention层量化，是当前版本的固定策略。
+4. OSTQuant+GPTQv2的分布式训练阶段必须使用8卡A800，硬件不足会导致训练失败。
+5. 量化模型推理时，均通过 `accelerate` 的 `dispatch_model` 做显存调度，避免单卡显存溢出。
 
-#### VLM模型评估
-
-- 启动vllm模型(Qwen3-4b-VL为例)：
-    - 浮点模型启动
-      ```shell
-        export LLM_USE_MODELSCOPE=True 
-        export CUDA_VISIBLE_DEVICES=0,1
-        python -m vllm.entrypoints.openai.api_server \
-        --model Qwen3-4b-VL \
-        --tensor-parallel-size 2 \
-        --served-model-name qwen3_vl \
-        --trust-remote-code \
-        --dtype float16 \
-        --max-model-len 10240 \
-        --gpu-memory-utilization 0.5 \
-        --max-num-seqs 16 \
-        --port 8000
-      ```
-    - 量化模型启动
-      ```shell
-        export LLM_USE_MODELSCOPE=True 
-        export CUDA_VISIBLE_DEVICES=2,3
-        python -m vllm.entrypoints.openai.api_server \
-        --model Qwen3-4b-VL-AWQ \
-        --tensor-parallel-size 2 \
-        --quantization awq \
-        --served-model-name qwen3_vl_awq \
-        --trust-remote-code \
-        --dtype float16 \
-        --max-model-len 10240 \
-        --gpu-memory-utilization 0.5 \
-        --max-num-seqs 16 \
-        --port 8001
-      ```
-- 启动模型评估脚本(Qwen3-1.7b为例):
-    - 评估模型config：  
-      ```yaml
-      eval_backend: VLMEvalKit
-      eval_config:
-        model: 
-            - type: Qwen3-4b-VL ##按照启动脚本的--model 来填
-            name: CustomAPIModel 
-            api_base: http://localhost:8000/v1/chat/completions
-            key: EMPTY
-            temperature: 0.0
-            img_size: -1
-        data:
-            - MMStar
-        mode: all
-        work_dir: outputs
-        nproc: 16
-      use_cache: /tmp/test
-      ```
-    - 模型评估脚本启动：
-      ```python
-        from evalscope.run import run_task
-        from evalscope.summarizer import Summarizer
-        import os
-        os.environ['VLMEVALKIT_USE_MODELSCOPE'] = '1'
-        def run_eval():
-            task_cfg = "eval_tmp.yaml" #填入对应yaml配置文件路径
-            run_task(task_cfg=task_cfg)
-            print('>> Start to get the report with summarizer ...')
-            report_list = Summarizer.get_report_from_cfg(task_cfg)
-        run_eval()
-      ```
 <br>
 <br>
 
 
+# 模型编译
 
-## 模型编译
+本节介绍量化大模型的编译，目前分为语言大模型和视觉语言大模型，编译方式稍有不同，以下通过详细示例代码说明.
 
-本节介绍量化大模型的编译，目前分为语言大模型和视觉语言大模型，编译方式稍有不同，以下通过详细示例代码说明：
+### 启动工具链镜像
+
+以下命令创建容器，其中``${your_data_dir}``表示宿主机中用户数据目录，``${version}``需改为实际版本``tag``。
+```shell
+sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edgex/tyllm:${version} bash
+```
 
 ### 语言大模型
 
@@ -535,24 +857,28 @@ from tyllm import torch_edgex
 from vllm.config import ModelConfig
 ModelConfig.verify_with_parallel_config = lambda a, b: True
 
-quant_path = "./Qwen3-1.7B-AWQ"
-aot_path = f"{quant_path}-AOT"
+quant_path = "./quantized_models/Qwen3-1.7B-AWQ"
+aot_path = f"./compiled_models/Qwen3-1.7B-AWQ-AOT_tc1.2.0_20251231"
 
 # 预填充序列长度
-prefill_seq_len = 8
+prefill_seq_len = 96
 # 最大KV键值对数，控制模型推理期间上下文长度
-max_kv_cache_size = 4096
+max_kv_cache_size = 8192
 # 指定多die编译，多die并行计算
 die_num = 4
 # 是否将embedding操作作为输入，默认False；如果True，embedding计算将被offload到cpu
 embedding_as_input = False
 
+torch_edgex.set_device_mode("page_mode", True)
 torch_edgex.set_device_trace_only("edgex", True)
-torch_edgex.set_device_mode("LM_die_remap", [0,1,2,3,0,0,0,0,0,0,0,0,0,0,0,0])
+# torch_edgex.set_device_mode("enable_proj_comm", True) 
+# torch_edgex.set_device_mode("attn_reduce_groups",[[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]]) # x6000 group配置
+# torch_edgex.set_device_mode("mlp_reduce_groups",[[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]]) # x6000 group配置
+# torch_edgex.set_device_mode("attn_tp_size",16)# 除了qwen3-32B tp16以外的所有模型都不要配置这个变量
 
 build_and_compile_llm(
     model_path=quant_path,
-    artifacts_path=f"{aot_path}_{prefill_seq_len}_{max_kv_cache_size}/{die_num}die",
+    artifacts_path=f"{aot_path}_{prefill_seq_len}_{max_kv_cache_size}",
     max_kv_cache_size=max_kv_cache_size,
     seq_len_list=[1, prefill_seq_len],
     dev_count=die_num,
@@ -596,35 +922,27 @@ Qwen3-1.7B-AWQ-AOT/
 ```python
 import os
 import logging
-import datetime
+from datetime import datetime 
 import numpy as np
 import torch
 from PIL import Image
 from vllm import LLM
 from vllm.config import ModelConfig, ParallelConfig
-torch.distributed.constants.default_pg_timeout = datetime.timedelta(hours=5)
 from tyllm import torch_edgex
-os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
-if torch.cuda.is_available():
-    torch_edgex.set_device_mode('jit_device', 'cuda')
-else:
-    torch_edgex.set_device_mode('jit_device', 'cpu')
+from pathlib import Path
+
+torch_edgex.set_device_mode('jit_device', 'cpu')
+# if torch.cuda.is_available():
+#     os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
+#     torch_edgex.set_device_mode('jit_device', 'cuda')
+# else:
+#     torch_edgex.set_device_mode('jit_device', 'cpu')
 from tyllm.vllm_ext.edgex_executor import EdgeXExecutor
 from vllm.platforms import current_platform
 import shutil
 import glob
 import argparse
 from vllm.config import ModelConfig
-
-def list_to_str_without_tail_zeros(lst):
-    last_non_zero_idx = -1
-    for i in range(len(lst)-1, -1, -1):
-        if lst[i] != 0:
-            last_non_zero_idx = i
-            break
-    if last_non_zero_idx == -1:
-        return ""
-    return "".join(str(num) for num in lst[:last_non_zero_idx+1])
 
 
 # 全局初始化配置
@@ -633,49 +951,41 @@ ModelConfig.verify_with_parallel_config = lambda a, b: True
 args = None
 IMAGE_ORG_PATH = "./960_540.jpg" 
 # 预处理后的图片路径
-IMAGE_PATH = "./test.jpg"  
+IMAGE_PATH = "./test.jpg"
 
 # 设备配置
-os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
-if torch.cuda.is_available():
-    torch_edgex.set_device_mode('jit_device', 'cuda')
-else:    
-    torch_edgex.set_device_mode('jit_device', 'cpu')
-
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["COMPILE_THREAD"] = "1"
-logging.getLogger("vllm").setLevel(logging.WARNING)
+logging.getLogger("vllm").setLevel(logging.DEBUG)
 
 # 解析命令行参数并初始化全局配置
 def parse_args():
     global args
     parser = argparse.ArgumentParser(description="vLLM多模态推理")
-    parser.add_argument("--model_dir", type=str, default="./quantized_models/qwen3vl-4b-AWQ", help="量化模型路径")
+    parser.add_argument("--model_dir", type=str, default="./quantized_models/chenmin/qwen3vl-4b-AWQ", help="模型路径")
     parser.add_argument("--num_die", type=int, default=4, help="设备数量")
     parser.add_argument("--input_height", type=int, default=540, help="输入图像高度")
     parser.add_argument("--input_width", type=int, default=960, help="输入图像宽度")
     parser.add_argument("--modality", type=str, default="image", choices=["image", "video"], help="输入模态")
     parser.add_argument("--source_tokenizer", type=str, default="./tokenizer.json", help="原模型tokenizer.json文件路径")
-    parser.add_argument("--prefill_lens", type=int, default=96, help="预填充序列长度")
-    parser.add_argument("--max_model_len", type=int, default=8192, help="模型单次推理中能够处理的最大序列长度")
-    parser.add_argument("--vm_die_remap", type=int, default=[0,1,2,3,0,0,0,0,0,0,0,0,0,0,0,0,0], help="vit die remap")
-    parser.add_argument("--lm_die_remap", type=int, default=[0,1,2,3,0,0,0,0,0,0,0,0,0,0,0,0,0], help="lm die remap")
+    parser.add_argument("--prefill_lens", type=int, default=96, help="prefill长度")
+    parser.add_argument("--max_model_len", type=int, default=8192, help="模型最大kv缓存")
     args = parser.parse_args()
 
 # 参数需在torch_edgex配置前完成
 parse_args()
 input_size = (args.input_height, args.input_width, 3)
-remap = list_to_str_without_tail_zeros(args.vm_die_remap)+list_to_str_without_tail_zeros(args.lm_die_remap)
-aot_dir = f"./compiled_models/Qwen3-VL-4b-AWQ-AOT_{input_size[1]}x{input_size[0]}_{args.max_model_len}_{args.num_die}die_{args.modality}_{remap}_gpu"
+
+aot_dir = f"./compiled_models/{Path(args.model_dir).name}_{input_size[1]}x{input_size[0]}_{args.max_model_len}_{args.num_die}die_{args.modality}_{datetime.now().strftime('%Y%m%d%H%M')}"
 
 # 配置torch_edgex
 torch_edgex.edgex_module.set_trace_only_mode(True)
 torch_edgex.set_device_mode("exec_mode", "AOT")
-torch_edgex.set_device_mode("prefill_lens", [1, args.prefill_lens])
+torch_edgex.set_device_mode("eager_on_chip", False)
+# torch_edgex.set_device_mode("attn_tp_size", args.num_die) # 除了qwen3-32B tp16以外的所有模型都不要配置这个变量
+torch_edgex.set_device_mode("prefill_lens", [1, 8, args.prefill_lens])
 torch_edgex.set_device_mode("AOT_DIR", aot_dir)
-torch_edgex.set_device_mode('tmp_image_path', IMAGE_PATH)
-torch_edgex.set_device_mode("VM_die_remap", [3,2,1,0,0,0,0,0,0,0,0,0,0,0,0,0])
-torch_edgex.set_device_mode("LM_die_remap", [1,2,3,0,0,0,0,0,0,0,0,0,0,0,0,0])
+
 
 # 动态修改ParallelConfig
 torch._dynamo.reset()
@@ -684,7 +994,7 @@ origin_post_init = ParallelConfig.__post_init__
 
 def modified_post_init(self):
     origin_post_init(self)
-    self.world_size = 1
+    self.world_size = args.num_die
 
 ParallelConfig.__post_init__ = modified_post_init
 
@@ -716,6 +1026,9 @@ def main():
         "<|im_start|>assistant\n"
     )
     
+    import vllm.envs as envs
+    envs.VLLM_ENABLE_V1_MULTIPROCESSING = False
+    envs.VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS = None
     # 初始化模型
     llm = LLM(
         model=args.model_dir,
@@ -729,10 +1042,13 @@ def main():
         disable_mm_preprocessor_cache=True,
         trust_remote_code=True,
         dtype="float16", 
-        disable_async_output_proc=True,
+        enforce_eager=True,
+        # disable_async_output_proc=True,
+        block_size=64,
         distributed_executor_backend=EdgeXExecutor,
         worker_cls="tyllm.vllm_ext.edgex_executor.EdgeXWorker",
-        device="cpu"
+        gpu_memory_utilization=0.15,
+        # device="cpu"
     )
     
     # 执行编译
@@ -802,8 +1118,6 @@ if __name__ == "__main__":
 **说明**：
 - 文件处理的代码将部分生成产物改名，以匹配云天大模型SDK的文件名要求
 - AOT_DIR 请配置为 Qwen3-VL-4B... 这样的模式中间用-隔开，以匹配板上运行云天大模型SDK的目录名要求
-- VM_die_remap 配置视觉部分Die分配顺序，list长度必须为16
-- LM_die_remap 配置语言部分Die分配顺序，list长度必须为16
 - IMAGE_ORG_PATH可以配置本地任意其它图片，只为生成图像输入
 - 此脚本GPU环境下整个编译过程有一定加速；如没有GPU可以尝试"COMPILE_THREAD"配置为"2"以多线程加速。
 
