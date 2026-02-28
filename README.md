@@ -3,6 +3,18 @@
 # 更新说明
 
 本文记录了``Edge10``系列大模型工具链的变更情况。
+
+**202600228/v1.2.1**
+
+- 🚀更新版本v1.2.1
+- 🚀编译工具更新(v1.2.1)
+    - 修复qwen3-vl-8B精度下降问题
+    - 修复一些模型编译出错问题（llama3-8B、qwen1.5-1.8B、qwen2-vl-7B、qwen3-32B 40k）
+    - 修复某些图像shape输入下编译崩溃问题
+    - 配套hcp版本更新到1.2.21
+- 🚀更新大模型支持列表
+- 🚀更新编译工具使用说明
+
 **202600115/v1.1.8**
 
 - 🚀更新版本v1.1.8
@@ -67,13 +79,13 @@
 | Qwen/Qwen3-1.7B                              |      ✅       |       ✅        |
 | Qwen/Qwen2.5-VL-7B                           |      ✅       |       ✅        |
 | Qwen/Qwen2.5-VL-3B                           |      ✅       |       ✅        |
-| Qwen/Qwen2-VL-7B                             |      ❌       |       ❌        |
+| Qwen/Qwen2-VL-7B                             |      ❌       |       ✅        |
 | Qwen/Qwen2-7B                                |      ✅       |       ✅        |
-| Qwen/Qwen1.5-1.8B                            |      ❌       |       ❌        |
+| Qwen/Qwen1.5-1.8B                            |      ❌       |       ✅        |
 | deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B    |      ✅       |       ✅        |
 | deepseek-ai/DeepSeek-R1-Distill-Qwen-7B      |      ✅       |       ✅        |
 | deepseek-ai/DeepSeek-R1-Distill-Qwen-32B     |      ✅       |       ✅        |
-| Llama3-8B                                    |      ❌       |       ❌        |
+| Llama3-8B                                    |      ❌       |       ✅        |
 <br>
 <br>
 
@@ -149,7 +161,7 @@ sudo docker pull 113.100.143.90:8091/edgex/tyquantize:${version}
 
 ### 1.5 安装TyLLM工具链
 
-编译工具链获取途径如下，请务必将``${version}``替换为实际对应的工具链版本号，比如``v1.1.8``：
+编译工具链获取途径如下，请务必将``${version}``替换为实际对应的工具链版本号，比如``v1.2.1``：
 
 ```shell
 sudo docker login 113.100.143.90:8091 -u custom -p DE@sz_intellif_2021
@@ -238,7 +250,7 @@ import os
 import torch
 import pytest
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from quant_toolchain import quantize_model
+from quant_toolchain import quantize_model, save_quantized_model
 from quant_toolchain import get_dataloader
 from quant_toolchain import get_awq_config
 from accelerate import infer_auto_device_map
