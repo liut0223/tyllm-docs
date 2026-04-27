@@ -4,6 +4,21 @@
 
 本文记录了``Edge10``系列大模型工具链的变更情况。
 
+**20260327/v1.1.0**
+
+- 🚀量化工具全新版本 (v1.1.0)
+    - PETQuant 完成系统性重构，API 全面统一
+    - 新增 per block 量化支持（已验证 DeepSeek-R1 模型）
+    - 新增性能模式选择，根据显存大小自动适配
+    - 重构后顶层 API 更加简洁规范
+- 🚀更新量化工具镜像
+    - 镜像地址：`113.100.143.90:8091/edgex/tyquantize:v1.1.0`
+- 🚀新增支持模型
+    - Qwen3-14B、Qwen3-32B
+    - MiniCPM-V-4_5、InternVL3-8B
+    - Qwen3-Reranker-0.6B
+- 🚀更新量化工具使用说明
+
 **202600228/v1.2.1**
 
 - 🚀更新版本v1.2.1
@@ -68,24 +83,28 @@
 
 已经支持的模型如下（包括不限于）：
 
-| Model (W4A16)                                | Quant Support | Compile Support |
-| :------------------------------------------- | :-----------: | :-------------: |
-| Qwen/Qwen3-VL-8B                             |      ✅       |       ✅        |
-| Qwen/Qwen3-VL-4B                             |      ✅       |       ✅        |
-| Qwen/Qwen3-VL-2B                             |      ✅       |       ✅        |
-| Qwen/Qwen3-32B                               |      ✅       |       ✅        |
-| Qwen/Qwen3-8B                                |      ✅       |       ✅        |
-| Qwen/Qwen3-4B                                |      ✅       |       ✅        |
-| Qwen/Qwen3-1.7B                              |      ✅       |       ✅        |
-| Qwen/Qwen2.5-VL-7B                           |      ✅       |       ✅        |
-| Qwen/Qwen2.5-VL-3B                           |      ✅       |       ✅        |
-| Qwen/Qwen2-VL-7B                             |      ❌       |       ✅        |
-| Qwen/Qwen2-7B                                |      ✅       |       ✅        |
-| Qwen/Qwen1.5-1.8B                            |      ❌       |       ✅        |
-| deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B    |      ✅       |       ✅        |
-| deepseek-ai/DeepSeek-R1-Distill-Qwen-7B      |      ✅       |       ✅        |
-| deepseek-ai/DeepSeek-R1-Distill-Qwen-32B     |      ✅       |       ✅        |
-| Llama3-8B                                    |      ❌       |       ✅        |
+| Model                                      | Quant Support | Compile Support |
+| :----------------------------------------- | :-----------: | :-------------: |
+| Qwen/Qwen3-VL-8B                           |      ✅       |       ✅        |
+| Qwen/Qwen3-VL-4B                           |      ✅       |       ✅        |
+| Qwen/Qwen3-VL-2B                           |      ✅       |       ✅        |
+| Qwen/Qwen3-32B                             |      ✅       |       ✅        |
+| Qwen/Qwen3-14B                             |      ✅       |       ✅        |
+| Qwen/Qwen3-8B                              |      ✅       |       ✅        |
+| Qwen/Qwen3-4B                              |      ✅       |       ✅        |
+| Qwen/Qwen3-1.7B                            |      ✅       |       ✅        |
+| Qwen/Qwen2.5-VL-7B                         |      ✅       |       ✅        |
+| Qwen/Qwen2.5-VL-3B                         |      ✅       |       ✅        |
+| Qwen/Qwen2-VL-7B                           |      ❌       |       ✅        |
+| Qwen/Qwen2-7B                              |      ✅       |       ✅        |
+| Qwen/Qwen1.5-1.8B                          |      ❌       |       ✅        |
+| deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B  |      ✅       |       ✅        |
+| deepseek-ai/DeepSeek-R1-Distill-Qwen-7B    |      ✅       |       ✅        |
+| deepseek-ai/DeepSeek-R1-Distill-Qwen-32B   |      ✅       |       ✅        |
+| Llama3-8B                                  |      ❌       |       ✅        |
+| MiniCPM-V-4_5                              |      ✅       |       ❌        |
+| InternVL3-8B                               |      ✅       |       ❌        |
+| Qwen3-Reranker-0.6B                        |      ✅       |       ❌        |
 <br>
 <br>
 
@@ -151,7 +170,7 @@ sudo apt install nvidia-container-toolkit
 
 ### 1.4 安装TyQuant量化工具
 
-量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.0.4``：
+量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.1.0``：
 
 ```shell
 sudo docker login 113.100.143.90:8091 -u custom -p DE@sz_intellif_2021
@@ -195,6 +214,78 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 ```
 > 注意：完整量化参考样例文件位于容器内 `/opt` 目录下
 
+### 2.1.1 v1.1.0 新版 API 使用指南
+
+v1.1.0 版本 PETQuant 完成系统性重构，采用统一的顶层 API，支持通过 JSON 配置文件管理所有量化参数。
+
+**核心类说明：**
+
+| 类名 | 说明 |
+|------|------|
+| `ConfigHelper` | 量化配置类，包含权重量化和激活值量化配置 |
+| `AlgConfig` | 量化算法配置类，支持 AWQ、GPTQv2、OSTQuant、Quarot 等算法 |
+| `PETQuantizer` | 量化器核心类，执行量化、保存、加载、推理等操作 |
+| `DataSelector` | 数据集选择器，根据模型和算法自动匹配校准数据 |
+
+**基本使用流程：**
+
+```python
+from pathlib import Path
+from PETQuant import ConfigHelper, AlgConfig, PETQuantizer, DataSelector, PerformanceModeEnum
+
+# 1. 从文件获取量化配置和算法配置
+quant_configs = [ConfigHelper.create_from_file(Path(quant_config_file))]
+alg_configs = [AlgConfig.create_from_file(Path(alg_config_file))]
+
+# 2. 创建 PETQuantizer 对象
+mode = PerformanceModeEnum.Auto  # 根据显存自动选择性能模式
+pet_quantizer = PETQuantizer(
+    model_path=args.model_path,
+    alg_configs=alg_configs,
+    quant_configs=quant_configs,
+    mode=mode,
+)
+
+# 3. 创建数据集选择器
+data_selector = DataSelector.from_model(
+    pet_quantizer.get_model(), args.dataset_path
+)
+
+# 4. 获取模型名称和算法名称
+model_name = pet_quantizer.get_model_name()
+alg_names = pet_quantizer.get_alg_names()
+
+# 5. 从文件读取校准数据集配置参数
+calib_dataset_params = dict_from_json_file(Path(args.calib_dataset_config_file))
+
+# 6. 选择 dataloader
+calib_dataloader = data_selector.get_dataloader(
+    model_name, alg_names[0], **calib_dataset_params
+)
+
+# 7. 执行量化
+pet_quantizer.run(dataloader=calib_dataloader)
+print("量化成功")
+
+# 8. 保存量化模型
+pet_quantizer.save_model(save_path=args.save_path)
+
+# 9. 验证量化模型
+sampling_params = {
+    "prompt": "什么是量子力学？",
+    "enable_thinking": False,
+    "sampling_params": {
+        "max_new_tokens": 100,
+        "do_sample": False,
+    },
+}
+print(pet_quantizer.generate(**sampling_params))
+```
+
+**示例代码路径：** `PETQuant/test/test.py` 或 `PETQuant/test/test_unified_config.py`
+
+**配置文件路径：** `PETQuant/configs/`
+
 ## 2.2 量化模型指标评估专属环境（w4a8 必用）
 官方vllm不支持w4a8量化模型，需使用定制镜像，创建容器如下：
 镜像地址：`192.168.14.129:80/library/aied/custom-vllm:0.11.0`
@@ -203,497 +294,341 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 docker run -it --name vllm_custom --gpus all -v  /data/:/data/ --ipc host  -p 8001:8000 --shm-size 16g 192.168.14.129:80/library/aied/custom-vllm:0.11.0 bash
 ```
 
+
 ## 2.3 支持的量化算法
-#### AWQ 量化算法
-- 论文地址：https://arxiv.org/pdf/2306.00978
-- 支持精度：Wi4Af16
-- 权重量化：✅ 非对称量化
-- 激活值量化：❌ 不量化、❌ 无动态量化
-- Attention量化：❌ 不量化
-- 推荐硬件配置
-  - Qwen3-8B/14B：A800 / 4090 * 1
-  - Qwen3-32B：A800 / 4090 * 1
 
-#### GPTQv2 量化算法
-- 论文地址：https://arxiv.org/abs/2504.02692
-- 支持精度：Wi4Ai8、Wi8Ai8、Wi4Af16
-- 权重量化：✅ 均支持非对称量化
-- 激活值量化：❌ 非对称量化；✅ 支持int8动态/静态量化
-- Attention量化：❌ 不量化
-- 推荐硬件配置：4090 * 1（支持Qwen3-32B）
+v1.1.0 版本支持以下量化算法，所有算法均采用统一的 API 接口：
 
-#### OSTQuant+GPTQv2 量化算法
-- 论文地址：https://arxiv.org/abs/2501.13987
-- 支持精度：Wi4Ai8
-- 权重量化：❌ 非对称量化
-- 激活值量化：❌ 非对称量化；✅ 动态量化
-- Attention量化：❌ 不量化
-- 推荐硬件配置（Qwen3-32B）
-  - 分布式训练阶段：A800*8
-  - 实量化阶段（GPTQv2）：A800*1 或 4090*1
-- 核心说明：分**分布式训练+实量化**两个阶段执行
+| 量化算法 | 支持精度 | 权重量化 | 激活值量化 | 激活值动态量化 | 推荐硬件配置 |
+|----------|----------|----------|------------|----------------|--------------|
+| AWQ | Wi4Af16 | 非对称 | 不量化 | 否 | Qwen3-8B/14B: A800/4090*1; Qwen3-32B: A800/4090*1 |
+| GPTQv2 | Wi4Ai8、Wi8Ai8、Wi4Af16 | 非对称 | 非对称 | 支持 int8 动态/静态 | 4090*1 (支持 Qwen3-32B) |
+| OSTQuant+GPTQv2 | Wi4Ai8 | 非对称 | 非对称 + 动态 | 是 | 分布式训练:A800*8; 实量化:A800*1 或 4090*1 |
+| Quarot | Wi4Ai8 | 对称 | 对称 | 是 | 4090 (支持 DeepSeek-R1) |
 
-#### Quarot 量化算法
-- 论文地址：https://arxiv.org/pdf/2404.00456
-- 支持精度：Wi4Ai8
-- 权重量化：✅ 对称量化
-- 激活值量化：✅ 对称量化；✅ 动态量化
-- Attention量化：❌ 不量化
-- 推荐硬件配置：4090（支持Qwen3-32B）
+**注意：**
+- 所有量化算法均不支持 Attention 层量化
+- OSTQuant+GPTQv2 需要分**分布式训练 + 实量化**两个阶段执行，分布式训练阶段必须使用 8 卡 A800
 
 ---
+
 ## 2.4 量化示例
-### 2.4.1 AWQ 量化示例 - LLM（以 Qwen3-32B 为例）
+
+### 2.4.1 AWQ 量化示例（以 Qwen3-32B 为例）
+
 ```python
-# awq_example.py
-import os
-import torch
-import pytest
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from quant_toolchain import quantize_model, save_quantized_model
-from quant_toolchain import get_dataloader
-from quant_toolchain import get_awq_config
-from accelerate import infer_auto_device_map
-from accelerate.big_modeling import dispatch_model
-from datasets import load_dataset
+from pathlib import Path
+from PETQuant import ConfigHelper, AlgConfig, PETQuantizer, DataSelector, PerformanceModeEnum
 
-# 准备模型
-model = AutoModelForCausalLM.from_pretrained("Qwen3-32B", torch_dtype=torch.float16)
-tokenizer = AutoTokenizer.from_pretrained("Qwen3-32B")
+# 1. 从文件获取量化配置和算法配置
+quant_configs = [ConfigHelper.create_from_file(Path("configs/quant_configs/awq_qwen3.json"))]
+alg_configs = [AlgConfig.create_from_file(Path("configs/alg_configs/awq.json"))]
 
-# 准备校准数据
-dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
-dataloader = get_dataloader(dataset, 
-                            tokenizer,
-                            num_max_orig_samples = 128,
-                            max_sequence_length = 512,
-                            column = "article", 
-                            concat_data = True, 
-                            pad_to_max_length = False)
-# 配置量化超参
-quant_config = get_awq_config()
-# 生成量化模型    
-quantized_model = quantize_model(model, quant_config, dataloader)
+# 2. 创建 PETQuantizer 对象
+mode = PerformanceModeEnum.Auto  # 根据显存自动选择性能模式
+pet_quantizer = PETQuantizer(
+    model_path="/data/pipline/original_models/Qwen3-32B/",
+    alg_configs=alg_configs,
+    quant_configs=quant_configs,
+    mode=mode,
+)
 
-# 保存量化模型
-save_quantized_model(quantized_model, "save_quantized_model", tokenizer)
+# 3. 创建数据集选择器
+data_selector = DataSelector.from_model(
+    pet_quantizer.get_model(), "/data/pipline/datasets/wikitext2/"
+)
 
-# 量化模型推理，评估效果
-dispatch_model(quantized_model, device_map=None, offload_buffers=True)    
-prompt = "Who are you?"
-messages = [
-    {"role": "user", "content": prompt}
-]
-text = tokenizer.apply_chat_template(
-                                     messages,
-                                     tokenize=False,
-                                     add_generation_prompt=True,
-                                     enable_thinking=True
-                                    )
-inputs = tokenizer([text], return_tensors="pt").to("cuda")
-with torch.no_grad():
-    generated_ids = model.generate(**inputs, max_new_tokens=32, do_sample=False)
-generated_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-print(generated_text[0])
+# 4. 获取模型名称和算法名称
+model_name = pet_quantizer.get_model_name()
+alg_names = pet_quantizer.get_alg_names()
+
+# 5. 从文件读取校准数据集配置参数
+calib_dataset_params = {
+    "num_samples": 128,
+    "max_sequence_length": 512,
+    "concat_data": True,
+}
+
+# 6. 选择 dataloader
+calib_dataloader = data_selector.get_dataloader(
+    model_name, alg_names[0], **calib_dataset_params
+)
+
+# 7. 执行量化
+pet_quantizer.run(dataloader=calib_dataloader)
+print("量化成功")
+
+# 8. 保存量化模型
+pet_quantizer.save_model(save_path="/data/work_dir/Qwen3-32B_AWQ")
+
+# 9. 验证量化模型
+sampling_params = {
+    "prompt": "Who are you?",
+    "enable_thinking": False,
+    "sampling_params": {
+        "max_new_tokens": 100,
+        "do_sample": False,
+    },
+}
+print(pet_quantizer.generate(**sampling_params))
 ```
 
 ### 2.4.2 AWQ 量化 - VLM（以 Qwen3-VL-4B 为例）
+
 ```python
-import os
-import gc
-import shutil
-import copy
-import time
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
-from quant_toolchain import quantize_model, save_quantized_model
-from quant_toolchain.configs.dataset_utils import get_dataloader, get_vlm_dataloader
-from quant_toolchain.configs.get_config import get_awq_config
-from quant_toolchain.utils import to_device, copy_missing_files
-from accelerate import infer_auto_device_map
-from accelerate.big_modeling import dispatch_model
-from datasets import load_dataset, load_from_disk
+from pathlib import Path
+from PETQuant import ConfigHelper, AlgConfig, PETQuantizer, DataSelector, PerformanceModeEnum
 
-MODEL_PATH = "/nfs/AIED/qiujingkai/hf_models/Qwen3-VL-4B-Instruct/"
-
-model = AutoModelForImageTextToText.from_pretrained(MODEL_PATH, torch_dtype=torch.float16)
-tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-processor = AutoProcessor.from_pretrained(MODEL_PATH)
-
-messages = [
-    {
-        "role": "user",
-        "content": [
-            {
-                "type": "image",
-                "image": "/nfs/AIED/qiujingkai/git_proj/quant_toolchain/logs/demo.jpeg",
-            },
-            {"type": "text", "text": "Describe this image."},
-        ],
-    }
+# 1. 从文件获取量化配置和算法配置（VLM 可配置两个不同的量化配置）
+quant_configs = [
+    ConfigHelper.create_from_file(Path("configs/quant_configs/awq_llm.json")),
+    ConfigHelper.create_from_file(Path("configs/quant_configs/awq_visual.json")),
+]
+alg_configs = [
+    AlgConfig.create_from_file(Path("configs/alg_configs/awq.json")),
+    None,  # visual 部分可使用相同算法
 ]
 
-# Preparation for inference
-inputs = processor.apply_chat_template(
-    messages,
-    tokenize=True,
-    add_generation_prompt=True,
-    return_dict=True,
-    return_tensors="pt"
+# 2. 创建 PETQuantizer 对象
+mode = PerformanceModeEnum.Auto
+pet_quantizer = PETQuantizer(
+    model_path="/data/pipline/original_models/Qwen3-VL-4B/",
+    alg_configs=alg_configs,
+    quant_configs=quant_configs,
+    mode=mode,
 )
 
-inputs = inputs.to("cuda")
-device_map = infer_auto_device_map(model, offload_buffers=True)
-print("device_map:", device_map)
-dispatch_model(model, device_map=device_map, offload_buffers=True)
-
-with torch.no_grad():
-    generated_ids = model.generate(**inputs, max_new_tokens=128)
-generated_ids_trimmed = [
-    out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-]
-output_text = processor.batch_decode(
-    generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+# 3. 创建数据集选择器
+data_selector = DataSelector.from_model(
+    pet_quantizer.get_model(), "/data/pipline/datasets/flickr30k/"
 )
-print(output_text)
-inputs = to_device(inputs, "cpu")
-model = model.cpu()
-torch.cuda.empty_cache()
 
-DATASET_ID = "lmms-lab/flickr30k"
-DATASET_SPLIT = "test[:512]"
-ds = load_dataset(DATASET_ID, split=DATASET_SPLIT)
-ds = ds.shuffle(seed=42)
-dataloader = get_vlm_dataloader(ds, processor, 512, 2048, 1, False)
+# 4. 获取模型名称和算法名称
+model_name = pet_quantizer.get_model_name()
+alg_names = pet_quantizer.get_alg_names()
 
-quant_config = get_awq_config(apply_clip=True, is_vlm=True, fallback=[".*visual"])
+# 5. 配置校准数据集参数
+calib_dataset_params = {
+    "num_samples": 512,
+    "max_sequence_length": 2048,
+    "concat_data": False,
+}
 
-start_time = time.time()
-quantized_model = quantize_model(model, quant_config, dataloader)
-end_time = time.time()
-print(f"Quantization time: {end_time - start_time}")
-
-device_map = infer_auto_device_map(quantized_model, offload_buffers=True)
-print("device_map:", device_map)
-dispatch_model(quantized_model, device_map=device_map, offload_buffers=True)
-inputs = to_device(inputs, "cuda")
-
-with torch.no_grad():
-    generated_ids_0 = quantized_model.generate(**inputs, max_new_tokens=128)
-generated_ids_trimmed = [
-    out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids_0)
-]
-output_text_0 = processor.batch_decode(
-    generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+# 6. 选择 dataloader
+calib_dataloader = data_selector.get_dataloader(
+    model_name, alg_names[0], **calib_dataset_params
 )
-print(output_text_0)
-inputs = to_device(inputs, "cpu")
 
-SAVE_PATH = "quantized_model"
-save_quantized_model(quantized_model, SAVE_PATH, tokenizer)
-copy_missing_files(MODEL_PATH, SAVE_PATH)
+# 7. 执行量化
+pet_quantizer.run(dataloader=calib_dataloader)
+print("量化成功")
+
+# 8. 保存量化模型
+pet_quantizer.save_model(save_path="/data/work_dir/Qwen3-VL-4B_AWQ")
+
+# 9. 验证量化模型
+sampling_params = {
+    "prompt": "Describe this image.",
+    "image_path": "/data/images/demo.jpg",
+    "enable_thinking": False,
+    "sampling_params": {
+        "max_new_tokens": 128,
+        "do_sample": False,
+    },
+}
+print(pet_quantizer.generate(**sampling_params))
 ```
 
-### 2.4.3 GPTQv2 量化（支持 Qwen3-32B）
+### 2.4.3 GPTQv2 量化（以 Qwen3-32B 为例）
+
 ```python
-# scripts/gptqv2_qwen3_32b.py
-import gc
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from quant_toolchain import quantize_model, save_quantized_model, load_quantized_model
-from quant_toolchain.configs.dataset_utils import get_dataloader
-from quant_toolchain.configs.get_config import get_gptqv2_config
-from accelerate import infer_auto_device_map
-from accelerate.big_modeling import dispatch_model
-from datasets import load_dataset, load_from_disk
-from accelerate import init_empty_weights
-import shutil, os
+from pathlib import Path
+from PETQuant import ConfigHelper, AlgConfig, PETQuantizer, DataSelector, PerformanceModeEnum
 
-def gptqv2_quant_e2e():
-    model_path = "/data/pipline/original_models/Qwen3-32B/"
-    SAVE_PATH = "../work_dir/Qwen3-4B_gptqv2"
-    
-    model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16) # on CPU
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    
-    dataset_path = "/data/pipline/datasets/wikitext2/wikitext2/"
-    dataset = load_from_disk(dataset_path)
-    dataloader = get_dataloader(dataset, 
-                                tokenizer,
-                                num_samples = 128,
-                                max_sequence_length = 128,
-                                concat_data = True, 
-                                pad_to_max_length = False)
+# 1. 从文件获取量化配置和算法配置
+quant_configs = [ConfigHelper.create_from_file(Path("configs/quant_configs/gptqv2_qwen3.json"))]
+alg_configs = [AlgConfig.create_from_file(Path("configs/alg_configs/gptqv2.json"))]
 
-    quant_config = get_gptqv2_config(online_rotate_tp = 16)
-    quantized_model = quantize_model(model, quant_config, dataloader)
-    
-    prompt = "Who are you?"
-    messages = [
-        {"role": "user", "content": prompt}
-    ]
-    text = tokenizer.apply_chat_template(
-                                         messages,
-                                         tokenize=False,
-                                         add_generation_prompt=True,
-                                         enable_thinking=True
-                                        )
-    inputs = tokenizer([text], return_tensors="pt").to("cuda")
-    
-    device_map = infer_auto_device_map(quantized_model, offload_buffers=True)
-    print("device_map:", device_map)
-    dispatch_model(quantized_model, device_map=device_map, offload_buffers=True)
-    
-    with torch.no_grad():
-        generated_ids_0 = quantized_model.generate(**inputs, max_new_tokens=256, do_sample=False)
-    generated_text_0 = tokenizer.batch_decode(generated_ids_0, skip_special_tokens=True)
-    print("generated_text_0:")
-    print(generated_text_0[0])
-    
-    save_quantized_model(quantized_model, SAVE_PATH)
-    shutil.copy(model_path + "vocab.json", os.path.join(SAVE_PATH, "vocab.json"))
-    shutil.copy(model_path + "merges.txt", os.path.join(SAVE_PATH, "merges.txt"))
-    shutil.copy(model_path + "tokenizer.json", os.path.join(SAVE_PATH, "tokenizer.json"))
-    shutil.copy(model_path + "tokenizer_config.json", os.path.join(SAVE_PATH, "tokenizer_config.json"))
-    
-    del quantized_model
-    gc.collect()
-    torch.cuda.empty_cache()    
-    
-if __name__ == "__main__":
-    gptqv2_quant_e2e()
+# 2. 创建 PETQuantizer 对象
+mode = PerformanceModeEnum.Auto
+pet_quantizer = PETQuantizer(
+    model_path="/data/pipline/original_models/Qwen3-32B/",
+    alg_configs=alg_configs,
+    quant_configs=quant_configs,
+    mode=mode,
+)
+
+# 3. 创建数据集选择器
+data_selector = DataSelector.from_model(
+    pet_quantizer.get_model(), "/data/pipline/datasets/wikitext2/"
+)
+
+# 4. 获取模型名称和算法名称
+model_name = pet_quantizer.get_model_name()
+alg_names = pet_quantizer.get_alg_names()
+
+# 5. 配置校准数据集参数
+calib_dataset_params = {
+    "num_samples": 128,
+    "max_sequence_length": 128,
+    "concat_data": True,
+}
+
+# 6. 选择 dataloader
+calib_dataloader = data_selector.get_dataloader(
+    model_name, alg_names[0], **calib_dataset_params
+)
+
+# 7. 执行量化
+pet_quantizer.run(dataloader=calib_dataloader)
+print("量化成功")
+
+# 8. 保存量化模型
+pet_quantizer.save_model(save_path="/data/work_dir/Qwen3-32B_GPTQv2")
 ```
 
-### 2.4.4 OSTQuant+GPTQv2 量化（两阶段，支持 Qwen3-32B）
+### 2.4.4 OSTQuant+GPTQv2 量化（两阶段，以 Qwen3-32B 为例）
+
 #### 第一阶段：分布式训练阶段
+
 ```python
-# scripts/test_ost_quant_train_stage.py
-import os
-import torch
-from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from quant_toolchain.configs.dataset_utils import get_dataloader
-from quant_toolchain.configs.get_config import get_ost_quant_config
-from quant_toolchain import train_ostquant_intermediate_model, save_ostquant_intermediate_model, load_ostquant_intermediate_model
-from accelerate import init_empty_weights
-from accelerate import infer_auto_device_map
-from accelerate.big_modeling import dispatch_model
+# test_ostquant_stage1.py
+from pathlib import Path
+from PETQuant import ConfigHelper, AlgConfig, PETQuantizer, DataSelector, PerformanceModeEnum
 
-from quant_toolchain import quantize_model, save_quantized_model, load_quantized_model
-from quant_toolchain.configs.dataset_utils import get_dataloader
-from quant_toolchain.configs.get_config import get_gptqv2_config
-from quant_toolchain import load_ostquant_intermediate_model
-from accelerate import infer_auto_device_map
-from accelerate.big_modeling import dispatch_model
-from datasets import load_dataset, load_from_disk
-import gc
-import shutil
+# 1. 从文件获取量化配置和算法配置
+quant_configs = [ConfigHelper.create_from_file(Path("configs/quant_configs/ostquant_qwen3.json"))]
+alg_configs = [AlgConfig.create_from_file(Path("configs/alg_configs/ostquant.json"))]
 
-MODEL_PATH = "/data/pipline/original_models/Qwen3-32B/"
-def test_ost_quant_train_stage():
-    SAVE_PATH = "../work_dir/Qwen3-32B_ost"
-    model = AutoModelForCausalLM.from_pretrained(MODEL_PATH,
-                                                 torch_dtype="auto",
-                                                 device_map="cpu",
-                                                 low_cpu_mem_usage=True
-                                                 )
-        
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    tokenizer.add_eos_token = False
-    tokenizer.add_bos_token = False
-    tokenizer.padding_side = "right"
-    
-    print("model load")
-    
-    train_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
-    train_dataloader = get_dataloader(train_dataset, 
-                                      tokenizer,
-                                      num_samples = None,
-                                      max_sequence_length = 128,
-                                      column = "text", 
-                                      concat_data = True, 
-                                      pad_to_max_length = False)
-    
-    
-    eval_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
-    eval_dataloader = get_dataloader(eval_dataset, 
-                                     tokenizer,
-                                     num_samples = None,
-                                     max_sequence_length = 128,
-                                     column = "text", 
-                                     concat_data = True, 
-                                     pad_to_max_length = False)
-    
-    print("dataset load")
-    
-    ost_quant_config = get_ost_quant_config(max_steps=100,
-                                            enable_evaluate=True,
-                                            gradient_accumulation_steps=2,
-                                            per_device_train_batch_size=1,
-                                            per_device_eval_batch_size=1,
-                                            online_rotate_tp=16)
-    
-    trained_model = train_ostquant_intermediate_model(
-                                                      float_model=model,
-                                                      quant_config=ost_quant_config,
-                                                      dataloader_for_train=train_dataloader,
-                                                      dataloader_for_eval=eval_dataloader
-                                                     )
-    save_ostquant_intermediate_model(trained_model, tokenizer, SAVE_PATH)
-    print(trained_model)
+# 2. 创建 PETQuantizer 对象
+mode = PerformanceModeEnum.Auto
+pet_quantizer = PETQuantizer(
+    model_path="/data/pipline/original_models/Qwen3-32B/",
+    alg_configs=alg_configs,
+    quant_configs=quant_configs,
+    mode=mode,
+)
 
-    device_map = infer_auto_device_map(trained_model, offload_buffers=True)
-    print("device_map:", device_map)
-    dispatch_model(trained_model, device_map=device_map, offload_buffers=True)
-    
-    prompt = "Who are you?"
-    messages = [
-        {"role": "user", "content": prompt}
-    ]
-    text = tokenizer.apply_chat_template(
-                                         messages,
-                                         tokenize=False,
-                                         add_generation_prompt=True,
-                                         enable_thinking=True
-                                        )
-    inputs = tokenizer([text], return_tensors="pt").to("cuda")
-    
-    with torch.no_grad():
-        generated_ids = trained_model.generate(**inputs, max_new_tokens=32, do_sample=False)
-    
-    generated_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-    print(generated_text[0])
+# 3. 创建数据集选择器
+data_selector = DataSelector.from_model(
+    pet_quantizer.get_model(), "/data/pipline/datasets/wikitext2/"
+)
+
+# 4. 获取模型名称和算法名称
+model_name = pet_quantizer.get_model_name()
+alg_names = pet_quantizer.get_alg_names()
+
+# 5. 配置训练和评估数据集参数
+train_dataset_params = {
+    "max_sequence_length": 128,
+    "concat_data": True,
+}
+eval_dataset_params = {
+    "max_sequence_length": 128,
+    "concat_data": True,
+}
+
+# 6. 选择 dataloader
+train_dataloader = data_selector.get_dataloader(
+    model_name, alg_names[0], split="train", **train_dataset_params
+)
+eval_dataloader = data_selector.get_dataloader(
+    model_name, alg_names[0], split="test", **eval_dataset_params
+)
+
+# 7. 执行分布式训练（第一阶段）
+pet_quantizer.run(
+    dataloader=train_dataloader,
+    eval_dataloader=eval_dataloader,
+    stage="train",
+)
+
+# 8. 保存中间模型
+pet_quantizer.save_model(save_path="/data/work_dir/Qwen3-32B_OST_train")
 ```
-分布式启动命令：
+
+启动命令（8 卡分布式训练）：
 ```bash
-torchrun   --nnodes=1   --nproc_per_node=8  --node_rank=0   --master_port=8899 test_ost_quant_train_stage.py
+torchrun --nnodes=1 --nproc_per_node=8 --master-addr localhost --master-port 8902 test_ostquant_stage1.py
 ```
 
-#### 第二阶段：实量化阶段（基于GPTQv2）
+#### 第二阶段：实量化阶段（基于 GPTQv2）
+
 ```python
-def quant_second_stage():
-    TRAINED_MODEL_PATH = "../work_dir/Qwen3-32B_ost"
-    tokenizer = AutoTokenizer.from_pretrained(TRAINED_MODEL_PATH)
-    trained_model = load_ostquant_intermediate_model(TRAINED_MODEL_PATH)
+# test_ostquant_stage2.py
+from pathlib import Path
+from PETQuant import ConfigHelper, AlgConfig, PETQuantizer, DataSelector, PerformanceModeEnum
 
-    dataset_path = "/data/pipline/datasets/wikitext2/wikitext2/"
-    dataset = load_from_disk(dataset_path)
-    dataloader = get_dataloader(dataset, 
-                                tokenizer,
-                                num_samples = 128,
-                                max_sequence_length = 128,
-                                concat_data = True, 
-                                pad_to_max_length = False)
+# 1. 从文件获取量化配置和算法配置（使用 GPTQv2）
+quant_configs = [ConfigHelper.create_from_file(Path("configs/quant_configs/gptqv2_qwen3.json"))]
+alg_configs = [AlgConfig.create_from_file(Path("configs/alg_configs/gptqv2.json"))]
 
-    quant_config = get_gptqv2_config(online_rotate_tp=16)
-    quantized_model = quantize_model(trained_model, quant_config, dataloader)
-    print(quantized_model)
+# 2. 加载第一阶段训练的中间模型
+mode = PerformanceModeEnum.Auto
+pet_quantizer = PETQuantizer(
+    model_path="/data/work_dir/Qwen3-32B_OST_train/",
+    alg_configs=alg_configs,
+    quant_configs=quant_configs,
+    mode=mode,
+)
 
-    prompt = "Who are you?"
-    messages = [
-        {"role": "user", "content": prompt}
-    ]
-    text = tokenizer.apply_chat_template(
-                                            messages,
-                                            tokenize=False,
-                                            add_generation_prompt=True,
-                                            enable_thinking=True
-                                        )
-    inputs = tokenizer([text], return_tensors="pt").to("cuda")
+# 3. 创建数据集选择器
+data_selector = DataSelector.from_model(
+    pet_quantizer.get_model(), "/data/pipline/datasets/wikitext2/"
+)
 
-    device_map = infer_auto_device_map(quantized_model, offload_buffers=True)
-    print("device_map:", device_map)
-    dispatch_model(quantized_model, device_map=device_map, offload_buffers=True)
+# 4. 获取模型名称和算法名称
+model_name = pet_quantizer.get_model_name()
+alg_names = pet_quantizer.get_alg_names()
 
-    with torch.no_grad():
-        generated_ids_0 = quantized_model.generate(**inputs, max_new_tokens=256, do_sample=False)
-    generated_text_0 = tokenizer.batch_decode(generated_ids_0, skip_special_tokens=True)
-    print("generated_text_0:")
-    print(generated_text_0[0])
+# 5. 配置校准数据集参数
+calib_dataset_params = {
+    "num_samples": 128,
+    "max_sequence_length": 128,
+    "concat_data": True,
+}
 
-    SAVE_PATH = TRAINED_MODEL_PATH+"_gptqv2"
-    save_quantized_model(quantized_model, SAVE_PATH)
+# 6. 选择 dataloader
+calib_dataloader = data_selector.get_dataloader(
+    model_name, alg_names[0], **calib_dataset_params
+)
 
-    shutil.copy(MODEL_PATH + "vocab.json", os.path.join(SAVE_PATH, "vocab.json"))
-    shutil.copy(MODEL_PATH + "merges.txt", os.path.join(SAVE_PATH, "merges.txt"))
-    shutil.copy(MODEL_PATH + "tokenizer.json", os.path.join(SAVE_PATH, "tokenizer.json"))
-    shutil.copy(MODEL_PATH + "tokenizer_config.json", os.path.join(SAVE_PATH, "tokenizer_config.json"))
-    
-    del quantized_model
-    gc.collect()
-    torch.cuda.empty_cache()
+# 7. 执行实量化（第二阶段）
+pet_quantizer.run(dataloader=calib_dataloader)
+print("量化成功")
 
-    loaded_quantized_model = load_quantized_model(SAVE_PATH)
-    print(loaded_quantized_model)
-    device_map = infer_auto_device_map(loaded_quantized_model, offload_buffers=True)
-    print("device_map:", device_map)
-    dispatch_model(loaded_quantized_model, device_map=device_map, offload_buffers=True)
-
-    with torch.no_grad():
-        generated_ids_1 = loaded_quantized_model.generate(**inputs, max_new_tokens=256, do_sample=False)
-    generated_text_1 = tokenizer.batch_decode(generated_ids_1, skip_special_tokens=True)
-    print("generated_text_1:")
-    print(generated_text_1[0])
+# 8. 保存最终量化模型
+pet_quantizer.save_model(save_path="/data/work_dir/Qwen3-32B_OST_GPTQv2")
 ```
 
-### 2.4.5 Quarot 量化（支持 Qwen3-32B）
+### 2.4.5 Quarot 量化（以 DeepSeek-R1 为例）
+
 ```python
-# scripts/test_qwen3_quarot_e2e.py
-import os
-import torch
-import gc
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
-from quant_toolchain.configs.get_config import get_quarot_config
-from quant_toolchain import quantize_model
-from accelerate import infer_auto_device_map
-from accelerate.big_modeling import dispatch_model
-from torch.distributed import init_process_group, destroy_process_group
-from quant_toolchain.utils import init_ddp, deinit_ddp
-from quant_toolchain import save_quantized_model, load_quantized_model
-from quant_toolchain.utils import auto_dispatch_model
+from pathlib import Path
+from PETQuant import ConfigHelper, AlgConfig, PETQuantizer, DataSelector, PerformanceModeEnum
 
-def test_quarot_e2e():
-    if not torch.cuda.is_available():
-        print("no gpus")
-        return
-    model_path = "/data/pipline/original_models/Qwen3-32B"
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-        low_cpu_mem_usage=True,
-    )
-    print(model)
+# 1. 从文件获取量化配置和算法配置
+quant_configs = [ConfigHelper.create_from_file(Path("configs/quant_configs/quarot_r1.json"))]
+alg_configs = [AlgConfig.create_from_file(Path("configs/alg_configs/quarot.json"))]
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+# 2. 创建 PETQuantizer 对象
+mode = PerformanceModeEnum.High  # Quarot 需要较高性能模式
+pet_quantizer = PETQuantizer(
+    model_path="/data/pipline/original_models/DeepSeek-R1/",
+    alg_configs=alg_configs,
+    quant_configs=quant_configs,
+    mode=mode,
+)
 
-    config = get_quarot_config()
-    print("quarot config:", config)
-    model = auto_dispatch_model(model, safe_margin=0.1, num_gpus=2)
-    quantized_model = quantize_model(
-        float_model=model, quant_config=config, dataloader=None
-    )
-    print("量化成功")
+# 3. 执行量化（Quarot 无需校准数据）
+pet_quantizer.run()
+print("量化成功")
 
-    save_path = "Qwen3-32B-Quarot-all"
-
-    os.makedirs(save_path, exist_ok=True)
-    save_quantized_model(quantized_model, save_path, tokenizer)
-    print("量化模型保存成功")
-
-    del quantized_model
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    loaded_quantized_model = load_quantized_model(save_path)
-    print("量化模型加载成功")
-
-if __name__ == "__main__":
-    test_quarot_e2e()
+# 4. 保存量化模型
+pet_quantizer.save_model(save_path="/data/work_dir/DeepSeek-R1_Quarot")
 ```
 
----
-
+**注意：** DeepSeek-R1 模型较大，建议使用 8xA800（CPU 内存至少 1000G）进行量化。
 ## 2.5 量化模型格式转换 & 指标评估
 ### 2.5.1 量化模型格式转换
 根据量化精度不同，执行对应的转换命令，生成可部署的量化模型文件
