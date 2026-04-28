@@ -243,6 +243,78 @@ v1.1.0 的量化入口已经统一，建议优先使用 `test/test_unified_confi
 
 如需分别切换量化配置、算法配置、采样配置，可改用 `test/test.py`。
 
+### 2.1.1 v1.1.0 新版 API 使用指南
+
+v1.1.0 版本 PETQuant 完成系统性重构，采用统一的顶层 API，支持通过 JSON 配置文件管理所有量化参数。
+
+**核心类说明：**
+
+| 类名 | 说明 |
+|------|------|
+| `ConfigHelper` | 量化配置类，包含权重量化和激活值量化配置 |
+| `AlgConfig` | 量化算法配置类，支持 AWQ、GPTQv2、OSTQuant、Quarot 等算法 |
+| `PETQuantizer` | 量化器核心类，执行量化、保存、加载、推理等操作 |
+| `DataSelector` | 数据集选择器，根据模型和算法自动匹配校准数据 |
+
+**基本使用流程：**
+
+```python
+from pathlib import Path
+from PETQuant import ConfigHelper, AlgConfig, PETQuantizer, DataSelector, PerformanceModeEnum
+
+# 1. 从文件获取量化配置和算法配置
+quant_configs = [ConfigHelper.create_from_file(Path(quant_config_file))]
+alg_configs = [AlgConfig.create_from_file(Path(alg_config_file))]
+
+# 2. 创建 PETQuantizer 对象
+mode = PerformanceModeEnum.Auto  # 根据显存自动选择性能模式
+pet_quantizer = PETQuantizer(
+    model_path=args.model_path,
+    alg_configs=alg_configs,
+    quant_configs=quant_configs,
+    mode=mode,
+)
+
+# 3. 创建数据集选择器
+data_selector = DataSelector.from_model(
+    pet_quantizer.get_model(), args.dataset_path
+)
+
+# 4. 获取模型名称和算法名称
+model_name = pet_quantizer.get_model_name()
+alg_names = pet_quantizer.get_alg_names()
+
+# 5. 从文件读取校准数据集配置参数
+calib_dataset_params = dict_from_json_file(Path(args.calib_dataset_config_file))
+
+# 6. 选择 dataloader
+calib_dataloader = data_selector.get_dataloader(
+    model_name, alg_names[0], **calib_dataset_params
+)
+
+# 7. 执行量化
+pet_quantizer.run(dataloader=calib_dataloader)
+print("量化成功")
+
+# 8. 保存量化模型
+pet_quantizer.save_model(save_path=args.save_path)
+
+# 9. 验证量化模型
+sampling_params = {
+    "prompt": "什么是量子力学？",
+    "enable_thinking": False,
+    "sampling_params": {
+        "max_new_tokens": 100,
+        "do_sample": False,
+    },
+}
+print(pet_quantizer.generate(**sampling_params))
+```
+
+**示例代码路径：** `PETQuant/test/test.py` 或 `PETQuant/test/test_unified_config.py`
+
+**配置文件路径：** `PETQuant/configs/`
+
 ## 2.2 量化模型指标评估专属环境（w4a8 必用）
 官方vllm不支持w4a8量化模型，需使用定制镜像，创建容器如下：
 镜像地址：`192.168.14.129:80/library/aied/custom-vllm:0.11.0`
@@ -253,8 +325,8 @@ docker run -it --name vllm_custom --gpus all -v  /data/:/data/ --ipc host  -p 80
 
 
 ## 2.3 支持的量化算法
-
 v1.1.0 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/test` 与 `/opt/app/configs` 实际文件整理：
+
 
 | 量化算法 | 支持精度 | 权重量化 | 激活值量化 | 激活值动态量化 | 推荐硬件配置 |
 |----------|----------|----------|------------|----------------|--------------|
@@ -273,7 +345,6 @@ v1.1.0 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/te
 ---
 
 ## 2.4 量化示例
-
 ### 2.4.1 推荐命令入口：`test/test_unified_config.py`
 
 推荐直接使用统一配置文件。其优势是一个 JSON 同时描述 `quant_config`、`alg_config` 和默认 `calib_dataset_params`，更适合文档化和批量复现。
