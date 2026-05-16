@@ -4,6 +4,16 @@
 
 本文记录了``Edge10``系列大模型工具链的变更情况。
 
+**20260513/v1.1.1**
+
+- 🚀量化工具更新 (v1.1.1)
+    - 新增 Qwen3.5 模型 GPTQv2 W4A16 量化支持
+    - 新增 Qwen3.5 模型敏感层分析工具
+    - 新增 Qwen3.5 GPTQv2 W4A16 混合精度量化配置
+- 🚀更新量化工具镜像
+    - 镜像地址：`113.100.143.90:8091/edgex/tyquantize:v1.1.1`
+- 🚀更新量化工具使用说明
+
 **20260327/v1.1.0**
 
 - 🚀量化工具全新版本 (v1.1.0)
@@ -170,7 +180,7 @@ sudo apt install nvidia-container-toolkit
 
 ### 1.4 安装TyQuant量化工具
 
-量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.1.0``：
+量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.1.1``：
 
 ```shell
 sudo docker login 113.100.143.90:8091 -u custom -p DE@sz_intellif_2021
@@ -212,9 +222,9 @@ sudo docker pull 113.100.143.90:8091/edgex/tyllm:${version}
 ```shell
 sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edgex/tyquantize:${version} bash
 ```
-> 注意：v1.1.0 镜像内完整量化样例位于 `/opt/app/test`，配置文件位于 `/opt/app/configs`。
+> 注意：v1.1.1 镜像内完整量化样例位于 `/opt/app/test`，配置文件位于 `/opt/app/configs`，敏感层分析工具位于 `/opt/app/tools/llm_sensitivity_analysis`。
 
-### 2.1.1 v1.1.0 目录结构
+### 2.1.1 v1.1.1 目录结构
 
 - `/opt/app/test`
   - `test.py`：拆分式入口，分别传入 `quant_config`、`alg_config`、`dataset_config`、`sampling_config`
@@ -230,10 +240,12 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
   - 推荐使用的一体化配置，例如 `awq_qwen3.json`、`gptqv2_qwen3.json`、`ostquant_qwen3.json`
 - `/opt/app/configs/sampling_configs`
   - 推理验证默认参数，当前镜像包含 `llm_default.json`、`vlm_default.json`、`reranker_default.json`
+- `/opt/app/tools/llm_sensitivity_analysis`
+  - LLM 敏感层分析工具，包含 `run_llm_sensitivity.py` 和 `analysis_configs/*`
 
 ### 2.1.2 推荐使用方式
 
-v1.1.0 的量化入口已经统一，建议优先使用 `test/test_unified_config.py`。流程如下：
+v1.1.1 的量化入口已经统一，建议优先使用 `test/test_unified_config.py`。流程如下：
 
 1. 从 `configs/unified_configs/*.json` 读取 `quant_config` 和 `alg_config`
 2. 根据 `model_path` 与 `dataset_path` 自动创建 `DataSelector`
@@ -243,9 +255,9 @@ v1.1.0 的量化入口已经统一，建议优先使用 `test/test_unified_confi
 
 如需分别切换量化配置、算法配置、采样配置，可改用 `test/test.py`。
 
-### 2.1.1 v1.1.0 新版 API 使用指南
+### 2.1.3 新版 API 使用指南
 
-v1.1.0 版本 PETQuant 完成系统性重构，采用统一的顶层 API，支持通过 JSON 配置文件管理所有量化参数。
+PETQuant 完成系统性重构后采用统一的顶层 API，支持通过 JSON 配置文件管理所有量化参数。
 
 **核心类说明：**
 
@@ -325,13 +337,13 @@ docker run -it --name vllm_custom --gpus all -v  /data/:/data/ --ipc host  -p 80
 
 
 ## 2.3 支持的量化算法
-v1.1.0 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/test` 与 `/opt/app/configs` 实际文件整理：
+v1.1.1 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/test`、`/opt/app/configs` 与 `/opt/app/tools` 实际文件整理：
 
 
 | 量化算法 | 支持精度 | 权重量化 | 激活值量化 | 激活值动态量化 | 推荐硬件配置 |
 |----------|----------|----------|------------|----------------|--------------|
 | AWQ | Wi4Af16 | 非对称 | 不量化 | 否 | Qwen3-8B/14B: A800/4090*1; Qwen3-32B: A800/4090*1 |
-| GPTQv2 | Wi4Ai8、Wi8Ai8、Wi4Af16 | 非对称 | 非对称 | 支持 int8 动态/静态 | 4090*1（Qwen3 / Qwen3-VL / Qwen2.5-VL 已有样例） |
+| GPTQv2 | Wi4Ai8、Wi8Ai8、Wi4Af16 | 非对称 | 非对称 | 支持 int8 动态/静态 | 4090*1（Qwen3 / Qwen3-VL / Qwen2.5-VL / Qwen3.5 已有样例） |
 | OSTQuant | Ai8 动态激活量化 | 不量化 | 对称 | 是 | 需使用 `torchrun` 分布式启动，卡数按模型规模选择 |
 | Quarot | Wi4Ai8、Wi8Ai8 | 对称 | 对称 | 是 | Qwen3: 4090*1；DeepSeek-R1: 建议 8xA800，CPU 内存至少 1000G |
 | SmoothQuant | Wi8Ai8 | 对称 | 对称 | 是 | Qwen3-32B: 4090*1 |
@@ -339,8 +351,9 @@ v1.1.0 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/te
 
 **注意：**
 - 所有量化算法均不支持 Attention 层量化
-- `ostquant` 在 v1.1.0 中已经不再采用“两阶段（先 OSTQuant 训练再 GPTQv2 实量化）”流程，直接使用 `ostquant.json + Qwen3_ai8_k.json` 即可完成量化
+- `ostquant` 在当前版本中已经不再采用“两阶段（先 OSTQuant 训练再 GPTQv2 实量化）”流程，直接使用 `ostquant.json + Qwen3_ai8_k.json` 即可完成量化
 - 对于 VLM，多子模块量化场景通常需要传入多份 `quant_config` / `alg_config`，或直接使用对应的 `unified_config`
+- Qwen3.5 的 GPTQv2 W4A16 配置默认只量化 LLM 子模块，`submodel_0` 保持不量化；`fallback` 会跳过 `lm_head`、`mtp.*` 和 `linear_attn.*`
 
 ---
 
@@ -387,11 +400,14 @@ python3 test/test.py \
 | AWQ | `awq_intern_vl.json` | InternVL |
 | AWQ | `awq_minicpm_v.json` | MiniCPM-V |
 | AWQ | `awq_qwen3_reranker.json` | Qwen3-Reranker |
+| AWQ | `awq_qwen3_5.json` | Qwen3.5 |
 | GPTQv2 | `gptqv2_qwen3.json` | Qwen3，Wi4Ai8 |
 | GPTQv2 | `gptqv2_qwen3_vl.json` | Qwen3-VL，视觉 W8A8 + LLM W4A8 |
 | GPTQv2 | `gptqv2_qwen2_5_vl.json` | Qwen2.5-VL，视觉 W8A8 + LLM W4A8 |
 | GPTQv2 | `gptqv2_per_channel_w4a16_qwen3.json` | Qwen3，Wi4Af16 |
 | GPTQv2 | `gptqv2_per_group_w4a16_int4_qwen3.json` | Qwen3，per-group W4A16 |
+| GPTQv2 | `gptqv2_qwen3_5_w4a16.json` | Qwen3.5，LLM W4A16 |
+| GPTQv2 | `gptqv2_qwen3_5_w4a16_mix.json` | Qwen3.5，LLM W4A16 混合精度 |
 | OSTQuant | `ostquant_qwen3.json` | Qwen3，单阶段流程 |
 | Quarot | `quarot_qwen3.json` | Qwen3，Wi4Ai8 |
 | Quarot | `quarot_deepseek_v3.json` | DeepSeek-R1，Wi4Ai8 |
@@ -436,6 +452,32 @@ python3 test/test_unified_config.py \
   --dataset-path /data/datasets/wikitext2 \
   --save-path /data/quant_models/Qwen3-0.6B-gptqv2 \
   --mode High
+```
+
+#### GPTQv2：Qwen3.5 W4A16
+
+```bash
+cd /opt/app
+python3 test/test_unified_config.py \
+  --unified-config-file configs/unified_configs/gptqv2_qwen3_5_w4a16.json \
+  --model-path /data/models/Qwen3.5-2B \
+  --dataset-path /data/datasets/HuggingFaceH4/ultrachat_200k \
+  --save-path /data/quant_models/Qwen3.5-2B-gptqv2-w4a16 \
+  --mode High \
+  --torch-dtype auto
+```
+
+#### GPTQv2：Qwen3.5 W4A16 混合精度
+
+```bash
+cd /opt/app
+python3 test/test_unified_config.py \
+  --unified-config-file configs/unified_configs/gptqv2_qwen3_5_w4a16_mix.json \
+  --model-path /data/models/Qwen3.5-2B \
+  --dataset-path /data/datasets/HuggingFaceH4/ultrachat_200k \
+  --save-path /data/quant_models/Qwen3.5-2B-gptqv2-w4a16-mix \
+  --mode High \
+  --torch-dtype auto
 ```
 
 #### GPTQv2：Qwen3-VL（视觉 W8A8 + LLM W4A8）
@@ -544,6 +586,50 @@ python3 test/test_unified_config.py \
 - `llm_default.json`：LLM 文本生成验证
 - `vlm_default.json`：VLM 图文生成验证
 - `reranker_default.json`：Reranker 相关性验证
+
+### 2.4.6 Qwen3.5 敏感层分析
+
+`v1.1.1` 镜像新增 LLM 敏感层分析工具，可用于生成混合精度量化所需的敏感层排序。
+
+脚本路径：
+
+```text
+/opt/app/tools/llm_sensitivity_analysis/run_llm_sensitivity.py
+```
+
+示例命令：
+
+```bash
+cd /opt/app
+python3 tools/llm_sensitivity_analysis/run_llm_sensitivity.py \
+  --model-path /data/models/Qwen3.5-2B \
+  --calibration-dataset-path /data/datasets/HuggingFaceH4/ultrachat_200k \
+  --unified-config-file tools/llm_sensitivity_analysis/analysis_configs/gptqv2_llm_qwen3_5.json \
+  --output-dir /data/analysis_results/Qwen3.5-2B-gptqv2 \
+  --mode High
+```
+
+输出目录的 `results/` 下会保存敏感层分析结果：
+
+- `topk.txt`：各层敏感度排序及 MAE 值
+- `mae_by_layer.png`：各层敏感度趋势图
+
+混合精度量化可参考：
+
+```text
+configs/unified_configs/gptqv2_qwen3_5_w4a16_mix.json
+```
+
+其中 `fallback` 字段用于指定不量化的层，例如：
+
+```json
+"fallback": [
+  "lm_head",
+  "mtp.*",
+  "model.language_model.layers.*.linear_attn.*",
+  "model.language_model.layers.(0|2|3|4|5|7)(\\..*)?$"
+]
+```
 ## 2.5 指标评估
 
 
