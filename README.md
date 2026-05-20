@@ -351,7 +351,7 @@ v1.1.1 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/te
 
 **注意：**
 - 所有量化算法均不支持 Attention 层量化
-- `ostquant` 在当前版本中已经不再采用“两阶段（先 OSTQuant 训练再 GPTQv2 实量化）”流程，直接使用 `ostquant.json + Qwen3_ai8_k.json` 即可完成量化
+- `ostquant` 仍按“两阶段”顺序执行：先进行 OSTQuant 训练，再进行 GPTQv2 实量化
 - 对于 VLM，多子模块量化场景通常需要传入多份 `quant_config` / `alg_config`，或直接使用对应的 `unified_config`
 - Qwen3.5 的 GPTQv2 W4A16 配置默认只量化 LLM 子模块，`submodel_0` 保持不量化；`fallback` 会跳过 `lm_head`、`mtp.*` 和 `linear_attn.*`
 
@@ -408,7 +408,7 @@ python3 test/test.py \
 | GPTQv2 | `gptqv2_per_group_w4a16_int4_qwen3.json` | Qwen3，per-group W4A16 |
 | GPTQv2 | `gptqv2_qwen3_5_w4a16.json` | Qwen3.5，LLM W4A16 |
 | GPTQv2 | `gptqv2_qwen3_5_w4a16_mix.json` | Qwen3.5，LLM W4A16 混合精度 |
-| OSTQuant | `ostquant_qwen3.json` | Qwen3，单阶段流程 |
+| OSTQuant | `ostquant_qwen3.json` | Qwen3，先 OSTQuant 训练，再 GPTQv2 实量化 |
 | Quarot | `quarot_qwen3.json` | Qwen3，Wi4Ai8 |
 | Quarot | `quarot_deepseek_v3.json` | DeepSeek-R1，Wi4Ai8 |
 | RTN | `rtn_per_block_per_group_qwen3.json` | Qwen3，per-block/per-group |
@@ -494,7 +494,7 @@ python3 test/test_unified_config.py \
 
 #### OSTQuant：Qwen3
 
-`ostquant` 在当前版本中不再拆分为两阶段。直接使用 `ostquant_qwen3.json` 即可，运行时 `DataSelector` 会返回 `train/eval` 两路 dataloader，`PETQuantizer.run(...)` 一次完成训练和量化。镜像自带样例如下：
+`ostquant` 仍按两阶段顺序执行：先进行 OSTQuant 训练，再进行 GPTQv2 实量化。运行时 `DataSelector` 会返回 `train/eval` 两路 dataloader。镜像自带样例如下：
 
 ```bash
 cd /opt/app
@@ -767,7 +767,7 @@ run_task(task_cfg=task_cfg)
     cp /data/pipline/original_models/Qwen3-32B/configuration.json /data/pipline/compiled_models2026/目标编译目录/16die/
     ```
 3. 所有量化算法均不支持Attention层量化，是当前版本的固定策略。
-4. `ostquant` 当前版本已经取消两阶段流程，但仍需通过 `torchrun` 分布式启动；具体卡数按模型规模和显存情况选择。
+4. `ostquant` 仍按两阶段顺序执行：先 OSTQuant 训练，再 GPTQv2 实量化；同时仍需通过 `torchrun` 分布式启动，具体卡数按模型规模和显存情况选择。
 5. 量化模型推理时，均通过 `accelerate` 的 `dispatch_model` 做显存调度，避免单卡显存溢出。
 
 <br>
