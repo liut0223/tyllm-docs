@@ -255,6 +255,30 @@ v1.1.1 的量化入口已经统一，建议优先使用 `test/test_unified_confi
 
 如需分别切换量化配置、算法配置、采样配置，可改用 `test/test.py`。
 
+#### VLM / Qwen3.5 回归验证图片准备
+
+`test/test_unified_config.py` 在保存模型后会根据模型 `config.json` 自动选择回归验证方式：
+
+- 普通 LLM：使用默认文本 prompt 调用 `generate(...)`
+- VLM 或包含 `vision_config` 的模型：使用默认图片调用 `generate(...)`
+
+`v1.1.1` 原生镜像中的默认 VLM 图片路径为：
+
+```text
+/nfs/AIED/qiujingkai/git_proj/quant_toolchain/logs/demo.jpeg
+```
+
+客户环境通常没有该 `/nfs/...` 路径。若该图片不存在，量化模型可能已经保存成功，但后置 smoke test 会在图片解析阶段报错，例如 `Incorrect image source` 或 `Invalid base64-encoded string`。因此运行 Qwen3-VL、Qwen2.5-VL、Qwen3.5 等包含视觉配置的模型前，建议先在容器内准备一张可访问的测试图片：
+
+```bash
+mkdir -p /nfs/AIED/qiujingkai/git_proj/quant_toolchain/logs
+cp /data/demo.jpeg /nfs/AIED/qiujingkai/git_proj/quant_toolchain/logs/demo.jpeg
+```
+
+其中 `/data/demo.jpeg` 可替换为用户挂载进容器的任意 JPEG 图片。离线交付时建议随交付包提供一张 `demo.jpeg`，或在交付镜像中内置该文件。
+
+如果日志中已经出现 `量化模型成功` 和 `保存量化模型成功`，但随后仅在上述默认图片路径处报错，表示量化产物已保存；该错误只影响后置生成验证，不影响已保存模型文件。
+
 ### 2.1.3 新版 API 使用指南
 
 PETQuant 完成系统性重构后采用统一的顶层 API，支持通过 JSON 配置文件管理所有量化参数。
@@ -464,7 +488,7 @@ python3 test/test_unified_config.py \
   --dataset-path /data/datasets/HuggingFaceH4/ultrachat_200k \
   --save-path /data/quant_models/Qwen3.5-2B-gptqv2-w4a16 \
   --mode High \
-  --torch-dtype auto
+  --torch-dtype bfloat16
 ```
 
 #### GPTQv2：Qwen3.5 W4A16 混合精度
@@ -477,8 +501,10 @@ python3 test/test_unified_config.py \
   --dataset-path /data/datasets/HuggingFaceH4/ultrachat_200k \
   --save-path /data/quant_models/Qwen3.5-2B-gptqv2-w4a16-mix \
   --mode High \
-  --torch-dtype auto
+  --torch-dtype bfloat16
 ```
+
+> Qwen3.5 W4A16 / W4A16 混合精度量化建议显式指定 `--torch-dtype bfloat16`。若模型配置包含 `vision_config`，请先按“VLM / Qwen3.5 回归验证图片准备”放置默认 smoke test 图片。
 
 #### GPTQv2：Qwen3-VL（视觉 W8A8 + LLM W4A8）
 
@@ -630,6 +656,24 @@ configs/unified_configs/gptqv2_qwen3_5_w4a16_mix.json
   "model.language_model.layers.(0|2|3|4|5|7)(\\..*)?$"
 ]
 ```
+
+#### Qwen3.5 敏感层分析常见问题
+
+**现象：** Qwen3.5 敏感层分析运行到部分 layer 后报错，日志中出现类似：
+
+```text
+RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu
+```
+
+**原因：** 敏感层分析会逐层替换/量化模型并抽取特征。Qwen3.5 模型在显存不足或自动显存调度触发 CPU offload 时，部分模块可能被 `accelerate` 放到 CPU，后续逐层计算时会出现 CPU / GPU 张量混用。
+
+**处理建议：**
+
+1. 优先使用显存更大的单卡运行，避免模型被自动 offload 到 CPU。
+2. 运行前确认目标 GPU 上没有其他大模型进程，必要时降低并发任务数量。
+3. 校准集先使用较小子集验证流程，确认可以完整生成 `results/topk.txt`、`results/ranking.json` 后再扩大样本数。
+4. 若仍复现该错误，表示当前 `v1.1.1` 原生镜像在该模型/显存组合下无法稳定完成敏感层分析；可先使用已有敏感层列表进行混合量化，或联系工具维护方获取修复后的镜像版本。
+
 ## 2.5 指标评估
 
 
