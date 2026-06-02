@@ -607,6 +607,52 @@ python3 test/test_unified_config.py \
 
 当前镜像中大部分 `*_calib.json` 内容为 `{}`，表示使用 `DataSelector` 的默认参数匹配逻辑；文档中仍建议保留对应文件路径，便于后续按算法或模型扩展。ViT 额外使用 `rtn_vit_eval.json` 作为评测集配置。
 
+#### 数据集目录格式要求
+
+当前镜像并不是所有量化算法都要求 `datasets.save_to_disk()` 生成的 HuggingFace Dataset 目录。`dataset_path` 的格式由镜像内 `PETQuant.data.loader.DataSelector` 根据模型类型和算法选择，建议优先按本文档示例和镜像内配置使用对应数据集格式。
+
+常见格式如下：
+
+| 场景 | 镜像内读取方式 | `dataset_path` 要求 |
+|------|----------------|---------------------|
+| Qwen3 GPTQv2 / SmoothQuant，以及自定义文本校准集用于 GPTQv2 混合量化 | `load_from_disk(dataset_path)` | HuggingFace Dataset 本地目录，通常包含 `data-*.arrow`、`dataset_info.json`、`state.json` |
+| Qwen3-VL / Qwen2.5-VL 的 AWQ、GPTQv2、SmoothQuant | `load_from_disk(dataset_path)` | HuggingFace Dataset 本地目录，多模态字段需与镜像内 VLM dataloader 期望一致 |
+| Qwen3 AWQ | `load_dataset(dataset_path, name="3.0.0", split="train")` | 可被 `datasets.load_dataset` 读取的数据集目录或数据集名称，例如 `cnn_dailymail` |
+| Qwen3.5 AWQ / GPTQv2 | `load_dataset(dataset_path, split="train_sft[:num_samples]")` | 可被 `datasets.load_dataset` 读取的对话数据集目录或缓存快照，例如 `HuggingFaceH4/ultrachat_200k`，样本需包含 `messages` 字段 |
+| OSTQuant Qwen3 | `load_dataset(dataset_path, "wikitext-2-raw-v1", split=...)` | Wikitext 格式数据集目录，例如 `Salesforce_wikitext`；不要传 `load_from_disk` 产物目录 |
+| Quarot | 不读取校准集 | `dataset_path` 可为空字符串 |
+| ViT RTN | 镜像内 ViT dataloader 直接读取图片数据目录 | 按 `rtn_vit_calib.json` / `rtn_vit_eval.json` 对应目录组织 |
+
+如果手头是普通 JSON 校准集，且目标算法走 `load_from_disk`，需要先转换为 HuggingFace Dataset 本地目录。例如文本校准集可整理为 `text` 列：
+
+```python
+from datasets import Dataset
+import json
+
+src = "/data/datasets/Calibration.json"
+out = "/data/datasets/calibration_hf"
+
+with open(src, encoding="utf-8") as f:
+    data = json.load(f)
+
+texts = [item["text"] for item in data if item.get("text")]
+Dataset.from_dict({"text": texts}).save_to_disk(out)
+```
+
+转换后在量化命令中使用：
+
+```bash
+--dataset-path /data/datasets/calibration_hf
+```
+
+或在敏感层分析中使用：
+
+```bash
+--calibration-dataset-path /data/datasets/calibration_hf
+```
+
+注意：`calib_dataset_params` 中的 `column`、`num_samples`、`max_seq_len`、`chat_template` 等参数必须与实际数据字段匹配。若使用镜像默认配置，大部分 `*_calib.json` 为空，会走各算法 dataloader 的默认字段约定。
+
 #### `sampling_configs`
 
 - `llm_default.json`：LLM 文本生成验证
@@ -687,6 +733,30 @@ export CUDA_VISIBLE_DEVICES=4,5,6,7
 # 启动vllm openai接口服务
 python3 -m vllm.entrypoints.openai.api_server --model /data/llmodels/Qwen3-32B_ostquant_gptqv2_1 --tensor-parallel-size 4 --served-model-name qwen3-32b --trust-remote-code  --dtype float16 --max-model-len 8192 --gpu-memory-utilization 0.5 --max-num-seqs 16   --quantization awq_triton_w4a8 --port 8000
 ```
+
+**特别说明：`--quantization` 需要按量化产物类型选择，不能直接套用上面的示例值。**
+
+上面命令中的 `--quantization awq_triton_w4a8` 仅适用于 W4A8 类量化模型示例。若量化产物是 GPTQv2 W4A16 或 W4A16 混合精度模型，应使用定制 vLLM 支持的 W4A16 加载方式，例如：
+
+```bash
+python3 -m vllm.entrypoints.openai.api_server \
+  --model /data/quant_models/Qwen3-4B-GPTQv2-W4A16-Mix \
+  --served-model-name qwen3-w4a16-mix \
+  --trust-remote-code \
+  --dtype float16 \
+  --max-model-len 8192 \
+  --gpu-memory-utilization 0.5 \
+  --max-num-seqs 16 \
+  --quantization awq \
+  --port 8000
+```
+
+常见选择：
+
+- W4A16 / W4A16 混合精度量化模型：优先使用 `--quantization awq`，不要使用 `awq_triton_w4a8`。
+- W4A8 量化模型：使用定制 vLLM，并按模型适配情况选择 `--quantization awq_triton_w4a8`。
+- 若模型 `config.json` 已包含可被 vLLM 自动识别的 `quantization_config`，仍建议显式指定 `--quantization`，避免不同 vLLM 版本自动识别行为不一致。
+- `--tensor-parallel-size` 按模型规模和 GPU 数设置；小模型冒烟测试通常单卡即可，不需要照抄 32B 示例中的 `--tensor-parallel-size 4`。
 
 #### 步骤2：容器外执行评估框架（evalscope）
 ```python
