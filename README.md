@@ -359,6 +359,12 @@ print(pet_quantizer.generate(**sampling_params))
 docker run -it --name vllm_custom --gpus all -v  /data/:/data/ --ipc host  -p 8001:8000 --shm-size 16g 192.168.14.129:80/library/aied/custom-vllm:0.11.0 bash
 ```
 
+**版本适配说明：**
+
+- 当前 `tyquantize:v1.1.1` 量化镜像内 `transformers` 已升级到 `5.8.0`。
+- Qwen3.5 混合量化产物依赖更新的 vLLM / transformers 支持，不能使用 `192.168.14.129:80/library/aied/custom-vllm:0.11.0` 进行部署或冒烟测试。请使用已适配 Qwen3.5 架构的新版 vLLM 环境。
+- `192.168.14.129:80/library/aied/custom-vllm:0.11.0` 仅用于当前文档中的 W4A8 量化模型及已验证兼容的 Qwen3 量化 / 混合量化模型测试。
+
 
 ## 2.3 支持的量化算法
 v1.1.1 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/test`、`/opt/app/configs` 与 `/opt/app/tools` 实际文件整理：
@@ -757,6 +763,13 @@ python3 -m vllm.entrypoints.openai.api_server \
 - W4A8 量化模型：使用定制 vLLM，并按模型适配情况选择 `--quantization awq_triton_w4a8`。
 - 若模型 `config.json` 已包含可被 vLLM 自动识别的 `quantization_config`，仍建议显式指定 `--quantization`，避免不同 vLLM 版本自动识别行为不一致。
 - `--tensor-parallel-size` 按模型规模和 GPU 数设置；小模型冒烟测试通常单卡即可，不需要照抄 32B 示例中的 `--tensor-parallel-size 4`。
+
+**Qwen3 / Qwen3.5 兼容性说明：**
+
+- 当前 `tyquantize:v1.1.1` 量化镜像内 `transformers` 已升级到 `5.8.0`。Qwen3.5 混合量化模型必须部署在已适配 Qwen3.5 架构的新版 vLLM 环境中，不适用于 `192.168.14.129:80/library/aied/custom-vllm:0.11.0`。
+- 若使用当前量化镜像对 Qwen3 做了量化或混合量化，并希望在 `192.168.14.129:80/library/aied/custom-vllm:0.11.0` 中冒烟测试，需要先处理量化模型目录下的 tokenizer 文件，否则可能在加载 tokenizer 时失败。
+- 方法一：手动编辑量化模型目录下的 `tokenizer_config.json`，将字段 `extra_special_tokens` 改为 `additional_special_tokens`。
+- 方法二：直接从原始模型目录复制 `tokenizer.json` 和 `tokenizer_config.json` 到量化模型目录，覆盖量化产物中的同名文件。
 
 #### 步骤2：容器外执行评估框架（evalscope）
 ```python
