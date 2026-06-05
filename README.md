@@ -698,7 +698,7 @@ python3 tools/llm_sensitivity_analysis/run_llm_sensitivity.py \
 configs/unified_configs/gptqv2_qwen3_5_w4a16_mix.json
 ```
 
-其中 `fallback` 字段用于指定不量化的层，例如：
+其中 `fallback` 字段用于指定不量化的层（一般取topk的前6层配置为跳过量化），例如：
 
 ```json
 "fallback": [
