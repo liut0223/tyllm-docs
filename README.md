@@ -3,6 +3,13 @@
 # 更新说明
 
 本文记录了``Edge10``系列大模型工具链的变更情况。
+**20260615/v1.2.2**
+
+- 🚀更新版本v1.2.2
+- 🚀编译工具更新(v1.2.2)
+    - 支持混合量化编译 Qwen3/Qwen3-VL/Qwen3.5-2B
+    - Qwen3.5目前支持 2B/4B (1die/3die)
+- 🚀更新编译工具使用说明
 
 **20260513/v1.1.1**
 
@@ -917,13 +924,24 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 以``Qwen3-1.7B-AWQ``为例：
 
 ```python
-from tyllm.build_util import build_and_compile_llm
+import os
+
+import torch
+from transformers import AutoTokenizer
 from tyllm import torch_edgex
+from tyllm.build_util import reset_op_cache
+from tyllm.vllm_ext.edgex_executor import EdgeXExecutor
+from vllm import SamplingParams
 from vllm.config import ModelConfig
+from vllm.engine.arg_utils import EngineArgs
+from vllm.v1.engine.llm_engine import LLMEngine
+
+
 ModelConfig.verify_with_parallel_config = lambda a, b: True
 
+
 quant_path = "./quantized_models/Qwen3-1.7B-AWQ"
-aot_path = f"./compiled_models/Qwen3-1.7B-AWQ-AOT_tc1.2.0_20251231"
+aot_path = "./compiled_models/Qwen3-1.7B-AWQ-AOT_tc1.2.0_20251231"
 
 # 预填充序列长度
 prefill_seq_len = 96
@@ -934,21 +952,61 @@ die_num = 4
 # 是否将embedding操作作为输入，默认False；如果True，embedding计算将被offload到cpu
 embedding_as_input = False
 
-torch_edgex.set_device_mode("page_mode", True)
-torch_edgex.set_device_trace_only("edgex", True)
-# torch_edgex.set_device_mode("enable_proj_comm", True) 
-# torch_edgex.set_device_mode("attn_reduce_groups",[[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]]) # x6000 group配置
-# torch_edgex.set_device_mode("mlp_reduce_groups",[[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]]) # x6000 group配置
-# torch_edgex.set_device_mode("attn_tp_size",16)# 除了qwen3-32B tp16以外的所有模型都不要配置这个变量
+def main():
+    os.environ.setdefault("COMPILE_THREAD", "1")
 
-build_and_compile_llm(
-    model_path=quant_path,
-    artifacts_path=f"{aot_path}_{prefill_seq_len}_{max_kv_cache_size}",
-    max_kv_cache_size=max_kv_cache_size,
-    seq_len_list=[1, prefill_seq_len],
-    dev_count=die_num,
-    embedding_as_input=embedding_as_input,
-)
+    reset_op_cache()
+    torch_edgex.set_device_mode("page_mode", True)
+    torch_edgex.set_device_trace_only("edgex", True)
+    torch_edgex.set_device_mode("exec_mode", "AOT")
+    torch_edgex.set_device_mode("prefill_lens", [1, prefill_seq_len])
+    torch_edgex.set_device_mode("eager_on_chip", False)
+    # torch_edgex.set_device_mode("enable_proj_comm", True)
+    # torch_edgex.set_device_mode("attn_reduce_groups", [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]]) # x6000 group配置
+    # torch_edgex.set_device_mode("mlp_reduce_groups", [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]]) # x6000 group配置
+    # torch_edgex.set_device_mode("attn_tp_size", die_num) # 除了qwen3-32B tp16以外的所有模型都不要配置这个变量
+    torch_edgex.set_device_mode(
+        "AOT_DIR", f"{aot_path}_{prefill_seq_len}_{max_kv_cache_size}"
+    )
+
+    import vllm.envs as envs
+
+    envs.VLLM_ENABLE_V1_MULTIPROCESSING = False
+    envs.VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS = None
+
+    engine = None
+    try:
+        with torch.no_grad():
+            engine_args = EngineArgs(
+                model=quant_path,
+                tensor_parallel_size=die_num,
+                max_model_len=max_kv_cache_size,
+                tokenizer=quant_path,
+                distributed_executor_backend=EdgeXExecutor,
+                dtype="half",
+                worker_cls="tyllm.vllm_ext.edgex_executor.EdgeXWorker",
+                block_size=64,
+            )
+            engine = LLMEngine.from_engine_args(engine_args)
+
+        tokenizer = AutoTokenizer.from_pretrained(quant_path, use_fast=True)
+        sampling_params = SamplingParams(max_tokens=1, temperature=0)
+        msg = [{"role": "user", "content": "hello"}]
+        input_str = tokenizer.apply_chat_template(
+            msg, tokenize=False, add_generation_prompt=True
+        )
+
+        engine.add_request("0", input_str, sampling_params)
+        while engine.has_unfinished_requests():
+            engine.step()
+    finally:
+        torch_edgex.set_device_trace_only("edgex", False)
+        if engine is not None:
+            del engine
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 **参数说明**：
@@ -991,24 +1049,23 @@ from datetime import datetime
 import numpy as np
 import torch
 from PIL import Image
+from tyllm import torch_edgex
 from vllm import LLM
 from vllm.config import ModelConfig, ParallelConfig
-from tyllm import torch_edgex
 from pathlib import Path
 
 torch_edgex.set_device_mode('jit_device', 'cpu')
-# if torch.cuda.is_available():
-#     os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
-#     torch_edgex.set_device_mode('jit_device', 'cuda')
-# else:
-#     torch_edgex.set_device_mode('jit_device', 'cpu')
+if torch.cuda.is_available():
+     os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'#
+     torch_edgex.set_device_mode('jit_device', 'cuda')
+else:
+     torch_edgex.set_device_mode('jit_device', 'cpu')
 from tyllm.vllm_ext.edgex_executor import EdgeXExecutor
 from vllm.platforms import current_platform
 import shutil
 import glob
 import argparse
 from vllm.config import ModelConfig
-
 
 # 全局初始化配置
 ModelConfig.verify_with_parallel_config = lambda a, b: True
@@ -1032,7 +1089,7 @@ def parse_args():
     parser.add_argument("--input_height", type=int, default=540, help="输入图像高度")
     parser.add_argument("--input_width", type=int, default=960, help="输入图像宽度")
     parser.add_argument("--modality", type=str, default="image", choices=["image", "video"], help="输入模态")
-    parser.add_argument("--source_tokenizer", type=str, default="./tokenizer.json", help="原模型tokenizer.json文件路径")
+    parser.add_argument("--source_tokenizer", type=str, default="/data/wr/workspace/llm_tool/tyquantize/v1.1.1/Qwen3-VL-2B-Instruct-awq/tokenizer.json", help="原模型tokenizer.json文件路径")
     parser.add_argument("--prefill_lens", type=int, default=96, help="prefill长度")
     parser.add_argument("--max_model_len", type=int, default=8192, help="模型最大kv缓存")
     args = parser.parse_args()
@@ -1041,7 +1098,7 @@ def parse_args():
 parse_args()
 input_size = (args.input_height, args.input_width, 3)
 
-aot_dir = f"./compiled_models/{Path(args.model_dir).name}_{input_size[1]}x{input_size[0]}_{args.max_model_len}_{args.num_die}die_{args.modality}_{datetime.now().strftime('%Y%m%d%H%M')}"
+aot_dir = f"./{Path(args.model_dir).name}_{input_size[1]}x{input_size[0]}_{args.max_model_len}_{args.num_die}die_{args.modality}_{datetime.now().strftime('%Y%m%d%H%M')}"
 
 # 配置torch_edgex
 torch_edgex.edgex_module.set_trace_only_mode(True)
@@ -1104,7 +1161,7 @@ def main():
             "min_pixels": 256 * 28 * 28,
             "max_pixels": 1280 * 28 * 28,
         },
-        disable_mm_preprocessor_cache=True,
+        #disable_mm_preprocessor_cache=True,
         trust_remote_code=True,
         dtype="float16", 
         enforce_eager=True,
