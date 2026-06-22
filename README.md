@@ -3,6 +3,15 @@
 # 更新说明
 
 本文记录了``Edge10``系列大模型工具链的变更情况。
+**20260513/v1.1.2**
+
+- 🚀量化工具更新 (v1.1.2)
+    - 新增 Qwen3.5 autoround w4a16量化支持
+    - 新增 Qwen3.5 autoround llmhead量化支持
+- 🚀更新量化工具镜像
+    - 镜像地址：`113.100.143.90:8091/edgex/tyquantize:v1.1.2`
+- 🚀更新量化工具使用说明
+
 **20260615/v1.2.2**
 
 - 🚀更新版本v1.2.2
@@ -187,7 +196,7 @@ sudo apt install nvidia-container-toolkit
 
 ### 1.4 安装TyQuant量化工具
 
-量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.1.1``：
+量化工具镜像获取途径如下，请务必将``${version}``替换为实际对应的版本号，比如``v1.1.2``：
 
 ```shell
 sudo docker login 113.100.143.90:8091 -u custom -p DE@sz_intellif_2021
@@ -229,22 +238,22 @@ sudo docker pull 113.100.143.90:8091/edgex/tyllm:${version}
 ```shell
 sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edgex/tyquantize:${version} bash
 ```
-> 注意：v1.1.1 镜像内完整量化样例位于 `/opt/app/test`，配置文件位于 `/opt/app/configs`，敏感层分析工具位于 `/opt/app/tools/llm_sensitivity_analysis`。
+> 注意：v1.1.2 镜像内完整量化样例位于 `/opt/app/test`，配置文件位于 `/opt/app/configs`，敏感层分析工具位于 `/opt/app/tools/llm_sensitivity_analysis`。
 
-### 2.1.1 v1.1.1 目录结构
+### 2.1.1 v1.1.2 目录结构
 
 - `/opt/app/test`
   - `test.py`：拆分式入口，分别传入 `quant_config`、`alg_config`、`dataset_config`、`sampling_config`
   - `test_unified_config.py`：推荐入口，使用单个 `unified_config` 同时描述量化配置和算法配置
   - 其余 `test_*.py`：各模型/算法的独立示例
 - `/opt/app/configs/alg_configs`
-  - 算法配置，当前镜像包含 `awq.json`、`gptqv2.json`、`gptqv2_vlm.json`、`ostquant.json`、`quarot.json`、`rtn.json`、`smoothquant.json`
+  - 算法配置，当前镜像包含 `awq.json`、`empty.json`、`gptqv2.json`、`gptqv2_vlm.json`、`ostquant.json`、`quarot.json`、`rtn.json`、`smoothquant.json`
 - `/opt/app/configs/quant_configs`
   - 模型量化配置，例如 `Qwen3_wui4_g.json`、`Qwen3_wi4_c_ai8_k_mse.json`、`Qwen3_VL_wi8_c_ai8_t.json`
 - `/opt/app/configs/dataset_configs`
   - 校准/评测数据配置，命名规则为 `算法_模型_calib.json` 或 `算法_模型_eval.json`
 - `/opt/app/configs/unified_configs`
-  - 推荐使用的一体化配置，例如 `awq_qwen3.json`、`gptqv2_qwen3.json`、`ostquant_qwen3.json`
+  - 推荐使用的一体化配置，例如 `autoround_qwen3_5_task1.json`、`autoround_qwen3_5_task2.json`、`autoround_qwen3_5_task3.json`、`awq_qwen3.json`、`gptqv2_qwen3.json`、`ostquant_qwen3.json`
 - `/opt/app/configs/sampling_configs`
   - 推理验证默认参数，当前镜像包含 `llm_default.json`、`vlm_default.json`、`reranker_default.json`
 - `/opt/app/tools/llm_sensitivity_analysis`
@@ -252,7 +261,7 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 
 ### 2.1.2 推荐使用方式
 
-v1.1.1 的量化入口已经统一，建议优先使用 `test/test_unified_config.py`。流程如下：
+v1.1.2 的量化入口已经统一，建议优先使用 `test/test_unified_config.py`。流程如下：
 
 1. 从 `configs/unified_configs/*.json` 读取 `quant_config` 和 `alg_config`
 2. 根据 `model_path` 与 `dataset_path` 自动创建 `DataSelector`
@@ -269,7 +278,7 @@ v1.1.1 的量化入口已经统一，建议优先使用 `test/test_unified_confi
 - 普通 LLM：使用默认文本 prompt 调用 `generate(...)`
 - VLM 或包含 `vision_config` 的模型：使用默认图片调用 `generate(...)`
 
-`v1.1.1` 原生镜像中的默认 VLM 图片路径为：
+`v1.1.2` 原生镜像中的默认 VLM 图片路径为：
 
 ```text
 /nfs/AIED/qiujingkai/git_proj/quant_toolchain/logs/demo.jpeg
@@ -358,8 +367,8 @@ print(pet_quantizer.generate(**sampling_params))
 
 **配置文件路径：** `PETQuant/configs/`
 
-## 2.2 量化模型指标评估专属环境（w4a8 必用）
-官方vllm不支持w4a8量化模型，需使用定制镜像，创建容器如下：
+## 2.2 量化模型指标评估专属环境（w4a8 / lm_head 量化必用）
+官方 vLLM 不支持 W4A8 量化模型；AutoRound lm_head 量化模型也需使用已适配的定制 vLLM 环境。创建容器如下：
 镜像地址：`192.168.14.129:80/library/aied/custom-vllm:0.11.0`
 创建容器命令：
 ```bash
@@ -368,17 +377,19 @@ docker run -it --name vllm_custom --gpus all -v  /data/:/data/ --ipc host  -p 80
 
 **版本适配说明：**
 
-- 当前 `tyquantize:v1.1.1` 量化镜像内 `transformers` 已升级到 `5.8.0`。
+- 当前 `tyquantize:v1.1.2` 量化镜像内 `transformers` 已升级到 `5.8.0`。
 - Qwen3.5 混合量化产物依赖更新的 vLLM / transformers 支持，不能使用 `192.168.14.129:80/library/aied/custom-vllm:0.11.0` 进行部署或冒烟测试。请使用已适配 Qwen3.5 架构的新版 vLLM 环境。
+- Qwen3.5 AutoRound task2 / task3 会量化 `lm_head`，部署时同样需要使用定制 vLLM；启动命令设置 `--dtype half`，不要手动添加 `--quantization awq`。
 - `192.168.14.129:80/library/aied/custom-vllm:0.11.0` 仅用于当前文档中的 W4A8 量化模型及已验证兼容的 Qwen3 量化 / 混合量化模型测试。
 
 
 ## 2.3 支持的量化算法
-v1.1.1 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/test`、`/opt/app/configs` 与 `/opt/app/tools` 实际文件整理：
+v1.1.2 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/test`、`/opt/app/configs` 与 `/opt/app/tools` 实际文件整理：
 
 
 | 量化算法 | 支持精度 | 权重量化 | 激活值量化 | 激活值动态量化 | 推荐硬件配置 |
 |----------|----------|----------|------------|----------------|--------------|
+| AutoRound | Wi4Af16 | 支持 int4 | 不量化 | 否 | Qwen3.5-2B/4B 已有样例 |
 | AWQ | Wi4Af16 | 非对称 | 不量化 | 否 | Qwen3-8B/14B: A800/4090*1; Qwen3-32B: A800/4090*1 |
 | GPTQv2 | Wi4Ai8、Wi8Ai8、Wi4Af16 | 非对称 | 非对称 | 支持 int8 动态/静态 | 4090*1（Qwen3 / Qwen3-VL / Qwen2.5-VL / Qwen3.5 已有样例） |
 | OSTQuant | Ai8 动态激活量化 | 不量化 | 对称 | 是 | 需使用 `torchrun` 分布式启动，卡数按模型规模选择 |
@@ -390,6 +401,7 @@ v1.1.1 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/te
 - 所有量化算法均不支持 Attention 层量化
 - `ostquant` 仍按“两阶段”顺序执行：先进行 OSTQuant 训练，再进行 GPTQv2 实量化
 - 对于 VLM，多子模块量化场景通常需要传入多份 `quant_config` / `alg_config`，或直接使用对应的 `unified_config`
+- Qwen3.5 AutoRound 支持两类配置：task1 不量化 `lm_head`；task2 / task3 量化 `lm_head`。task3 需要基于 task2 的输出模型继续处理，用于 `tie_word_embeddings=true` 场景
 - Qwen3.5 的 GPTQv2 W4A16 配置默认只量化 LLM 子模块，`submodel_0` 保持不量化；`fallback` 会跳过 `lm_head`、`mtp.*` 和 `linear_attn.*`
 
 ---
@@ -430,6 +442,9 @@ python3 test/test.py \
 
 | 算法 | 统一配置文件 | 说明 |
 |------|--------------|------|
+| AutoRound | `autoround_qwen3_5_task1.json` | Qwen3.5，LLM W4A16，不量化 lm_head |
+| AutoRound | `autoround_qwen3_5_task2.json` | Qwen3.5，LLM W4A16，量化 lm_head，`tie_word_embeddings=false` |
+| AutoRound | `autoround_qwen3_5_task3.json` | Qwen3.5，LLM W4A16，量化 lm_head，`tie_word_embeddings=true`，基于 task2 输出模型派生 |
 | AWQ | `awq_qwen3.json` | Qwen3 LLM |
 | AWQ | `awq_qwen3_vl.json` | Qwen3-VL，多子模块 |
 | AWQ | `awq_qwen2_5.json` | Qwen2.5 LLM |
@@ -518,6 +533,45 @@ python3 test/test_unified_config.py \
 ```
 
 > Qwen3.5 W4A16 / W4A16 混合精度量化建议显式指定 `--torch-dtype bfloat16`。若模型配置包含 `vision_config`，请先按“VLM / Qwen3.5 回归验证图片准备”放置默认 smoke test 图片。
+
+#### AutoRound：Qwen3.5 W4A16，不量化 lm_head
+
+AutoRound 使用 `NeelNanda_pile-10k` 作为校准数据集。量化过程中可能出现 `Deterministic behavior` 相关 `UserWarning`，不影响量化；如需规避，可在命令前增加 `CUBLAS_WORKSPACE_CONFIG=:4096:8`。
+
+```bash
+cd /opt/app
+CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false python3 test/test_unified_config.py \
+  --unified-config-file configs/unified_configs/autoround_qwen3_5_task1.json \
+  --model-path /data/models/Qwen3.5-2B \
+  --dataset-path /data/datasets/NeelNanda_pile-10k \
+  --save-path /data/quant_models/Qwen3.5-2B-AutoRound-task1
+```
+
+#### AutoRound：Qwen3.5 W4A16，量化 lm_head，`tie_word_embeddings=false`
+
+```bash
+cd /opt/app
+CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false python3 test/test_unified_config.py \
+  --unified-config-file configs/unified_configs/autoround_qwen3_5_task2.json \
+  --model-path /data/models/Qwen3.5-2B \
+  --dataset-path /data/datasets/NeelNanda_pile-10k \
+  --save-path /data/quant_models/Qwen3.5-2B-AutoRound-task2
+```
+
+#### AutoRound：Qwen3.5 W4A16，量化 lm_head，`tie_word_embeddings=true`
+
+task3 需要在 task2 输出模型上派生，先完成 task2，再将 `--model-path` 指向 task2 的输出模型路径。
+
+```bash
+cd /opt/app
+CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false python3 test/test_unified_config.py \
+  --unified-config-file configs/unified_configs/autoround_qwen3_5_task3.json \
+  --model-path /data/quant_models/Qwen3.5-2B-AutoRound-task2 \
+  --dataset-path /data/datasets/NeelNanda_pile-10k \
+  --save-path /data/quant_models/Qwen3.5-2B-AutoRound-task3
+```
+
+> AutoRound task2 / task3 量化了 `lm_head`，部署时需要使用定制 vLLM 镜像；启动命令设置 `--dtype half`，不要手动添加 `--quantization awq`。
 
 #### GPTQv2：Qwen3-VL（视觉 W8A8 + LLM W4A8）
 
@@ -731,7 +785,7 @@ RuntimeError: Expected all tensors to be on the same device, but found at least 
 1. 优先使用显存更大的单卡运行，避免模型被自动 offload 到 CPU。
 2. 运行前确认目标 GPU 上没有其他大模型进程，必要时降低并发任务数量。
 3. 校准集先使用较小子集验证流程，确认可以完整生成 `results/topk.txt`、`results/ranking.json` 后再扩大样本数。
-4. 若仍复现该错误，表示当前 `v1.1.1` 原生镜像在该模型/显存组合下无法稳定完成敏感层分析；可先使用已有敏感层列表进行混合量化，或联系工具维护方获取修复后的镜像版本。
+4. 若仍复现该错误，表示当前 `v1.1.2` 原生镜像在该模型/显存组合下无法稳定完成敏感层分析；可先使用已有敏感层列表进行混合量化，或联系工具维护方获取修复后的镜像版本。
 
 ## 2.5 指标评估
 
@@ -766,14 +820,16 @@ python3 -m vllm.entrypoints.openai.api_server \
 
 常见选择：
 
-- W4A16 / W4A16 混合精度量化模型：优先使用 `--quantization awq`，不要使用 `awq_triton_w4a8`。
+- GPTQv2 W4A16 / W4A16 混合精度量化模型：优先使用 `--quantization awq`，不要使用 `awq_triton_w4a8`。
+- AutoRound task1（不量化 `lm_head`）：按目标 vLLM 环境的 AutoRound 支持方式部署。
+- AutoRound task2 / task3（量化 `lm_head`）：使用定制 vLLM，设置 `--dtype half`，不要手动添加 `--quantization awq`。
 - W4A8 量化模型：使用定制 vLLM，并按模型适配情况选择 `--quantization awq_triton_w4a8`。
-- 若模型 `config.json` 已包含可被 vLLM 自动识别的 `quantization_config`，仍建议显式指定 `--quantization`，避免不同 vLLM 版本自动识别行为不一致。
+- 若模型 `config.json` 已包含可被 vLLM 自动识别的 `quantization_config`，仍建议按上面的产物类型显式选择部署参数，避免不同 vLLM 版本自动识别行为不一致。
 - `--tensor-parallel-size` 按模型规模和 GPU 数设置；小模型冒烟测试通常单卡即可，不需要照抄 32B 示例中的 `--tensor-parallel-size 4`。
 
 **Qwen3 / Qwen3.5 兼容性说明：**
 
-- 当前 `tyquantize:v1.1.1` 量化镜像内 `transformers` 已升级到 `5.8.0`。Qwen3.5 混合量化模型必须部署在已适配 Qwen3.5 架构的新版 vLLM 环境中，不适用于 `192.168.14.129:80/library/aied/custom-vllm:0.11.0`。
+- 当前 `tyquantize:v1.1.2` 量化镜像内 `transformers` 已升级到 `5.8.0`。Qwen3.5 混合量化模型和 AutoRound lm_head 量化模型必须部署在已适配 Qwen3.5 架构的新版 vLLM 环境中，不适用于 `192.168.14.129:80/library/aied/custom-vllm:0.11.0`。
 - 若使用当前量化镜像对 Qwen3 做了量化或混合量化，并希望在 `192.168.14.129:80/library/aied/custom-vllm:0.11.0` 中冒烟测试，需要先处理量化模型目录下的 tokenizer 文件，否则可能在加载 tokenizer 时失败。
 - 方法一：手动编辑量化模型目录下的 `tokenizer_config.json`，将字段 `extra_special_tokens` 改为 `additional_special_tokens`。
 - 方法二：直接从原始模型目录复制 `tokenizer.json` 和 `tokenizer_config.json` 到量化模型目录，覆盖量化产物中的同名文件。
@@ -908,7 +964,7 @@ run_task(task_cfg=task_cfg)
 <br>
 
 
-# 模型编译
+# 三、模型编译
 
 本节介绍量化大模型的编译，目前分为语言大模型和视觉语言大模型，编译方式稍有不同，以下通过详细示例代码说明.
 
@@ -1089,7 +1145,7 @@ def parse_args():
     parser.add_argument("--input_height", type=int, default=540, help="输入图像高度")
     parser.add_argument("--input_width", type=int, default=960, help="输入图像宽度")
     parser.add_argument("--modality", type=str, default="image", choices=["image", "video"], help="输入模态")
-    parser.add_argument("--source_tokenizer", type=str, default="/data/wr/workspace/llm_tool/tyquantize/v1.1.1/Qwen3-VL-2B-Instruct-awq/tokenizer.json", help="原模型tokenizer.json文件路径")
+    parser.add_argument("--source_tokenizer", type=str, default="./tokenizer.json", help="原模型tokenizer.json文件路径")
     parser.add_argument("--prefill_lens", type=int, default=96, help="prefill长度")
     parser.add_argument("--max_model_len", type=int, default=8192, help="模型最大kv缓存")
     args = parser.parse_args()
@@ -1405,3 +1461,155 @@ GPU环境须限制编译线程环境变量
 
 **解决方法**：
 保持文档中编译脚本各操作先后顺序不做改动。
+
+# 附录一：已验证模型
+
+| 模型 | 量化方法（W4A16） | 支持量化 | 混合量化 | LM Head | 支持编译 |
+| --- | --- | :---: | :---: | :---: | :---: |
+| Qwen2.5-3B | AWQ | √ |  | × | √ |
+| Qwen2.5-3B | GPTQv2 |  |  | × | √ |
+| Qwen2.5-VL-3B | AWQ | √ | - | × | √ |
+| Qwen2.5-VL-3B | GPTQv2 | √ | - | × | √ |
+| Qwen3-1.7B | AWQ | √ | - | × | √ |
+| Qwen3-1.7B | GPTQv2 | √ | √ | × | √ |
+| Qwen3-4B | AWQ | √ | - | × | √ |
+| Qwen3-4B | GPTQv2 | √ | √ | × | √ |
+| Qwen3-8B | AWQ | √ | - | × | √ |
+| Qwen3-8B | GPTQv2 | √ | √ | × | √ |
+| Qwen3-VL-2B | AWQ | √ | - | × | √ |
+| Qwen3-VL-2B | GPTQv2 | √ | - | × | √ |
+| Qwen3-VL-4B | AWQ | √ | - | × | √ |
+| Qwen3-VL-4B | GPTQv2 | √ | - | × | √ |
+| Qwen3-VL-8B | AWQ | √ | - | × | √ |
+| Qwen3-VL-8B | GPTQv2 | √ | - | × | √ |
+| Qwen3.5-2B | GPTQv2 | √ | √ | √ | √ |
+| Qwen3.5-2B | AutoRound | √ | × | √ | √ |
+| Qwen3.5-4B | GPTQv2 | √ | √ | √ | √ |
+| Qwen3.5-4B | AutoRound | √ | × | √ | √ |
+
+# 附录二：已验证模型精度
+
+## AWQ（Wi4Af16）
+
+### LLM
+
+| Model | 数据来源 | ceval | livecodebench | gpqa | longbenchv2 | math_prm800k_500 | mmlu_pro | ifeval |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3-8B | bf16 | 85.13 | 89 | 58.18 | 41.33 | 93.8 | 72.45 | 91.61 |
+| Qwen3-8B | PETQuant | 84.5 | 86.5 | 58.89 | 41.33 | 93.4 | 71.82 | 91.37 |
+| Qwen3-14B | bf16 | 88.16 | 91 | 63.94 | 47.43 | 94.8 | 75.79 | 92.09 |
+| Qwen3-14B | PETQuant | 86.31 | 89.25 | 62.22 | 45.33 | 94.4 | 75.01 | 91.97 |
+| Qwen3-32B | bf16 | 89.57 | 89 | 67.37 | 50.1 | 93.8 | 78.07 | 90.89 |
+| Qwen3-32B | PETQuant | 89.69 | 88 | 66.97 | 46.86 | 93.4 | 76.66 | 90.17 |
+
+### VLM (Visual(\) LLM(Wi4Af16))
+
+| Model | 数据来源 | CCBench | CMMMU_VAL | HallusionBench_aAcc | MMBench_DEV_CN | MMBench_DEV_EN | MMBench_TEST_EN | RealWorldQA | SEEDBench_IMG | Average | MME | OCRBench |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3-VL-2B | bf16 | 60.2 | 43.22 | 66.67 | 77.66 | 78.61 | 80.61 | 60.92 | 75.29 | 67.9 | 2045.39 | 779 |
+| Qwen3-VL-2B | PETQuant | 61.18 | 40.67 | 64.67 | 75.6 | 75.34 | 78.53 | 59.48 | 74.87 | 66.29 | 1933.55 | 769 |
+| Qwen3-VL-4B | bf16 | 70 | 53.56 | 69.93 | 84.28 | 86 | 83.97 | 68.37 | 78.29 | 74.3 | 2325.63 | 816 |
+| Qwen3-VL-4B | PETQuant | 67.25 | 46.3 | 70.98 | 83.08 | 85.4 | 83.69 | 67.58 | 77.58 | 72.74 | 2305.07 | 807 |
+| Qwen3-VL-8B | bf16 | 73.14 | 51.67 | 73.71 | 85.57 | 86.94 | 86.32 | 69.8 | 78.12 | 75.66 | 2430.89 | 851 |
+| Qwen3-VL-8B | PETQuant | 74.12 | 54.89 | 73.4 | 83.93 | 86.17 | 85.82 | 68.37 | 77.85 | 75.57 | 2376.87 | 849 |
+| MiniCPM-V-4_5 | bf16 | 69.8 | 49.11 | 70.35 | 84.97 | 85.82 | 84.92 | 66.67 | 76.61 | 73.53 | 2447.48 | 801 |
+| MiniCPM-V-4_5 | PETQuant | 68.24 | 47.44 | 68.35 | 83.85 | 85.14 | 85.48 | 66.41 | 76.49 | 72.67 | 2412.02 | 804 |
+| InternVL3-8B | bf16 | 77.45 | 44.67 | 63.2 | 82.65 | 82.04 | 81.5 | 64.44 | 75.98 | 71.49 | 2401.35 | 774 |
+| InternVL3-8B | PETQuant | 75.49 | 45.67 | 63.62 | 80.84 | 81.62 | 81.39 | 65.23 | 75.85 | 71.21 | 2334.87 | 811 |
+
+### Reranker
+
+| Model | 数据来源 | MMarcoRetrieval | DuRetrieval | CovidRetrieval | CmedqaRetrieval | EcomRetrieval | MedicalRetrieval | VideoRetrieval | AVERAGE |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3-Reranker-0.6B<br> | bf16 | 81.75 | 85.99 | 88.57 | 37.62 | 65.87 | 55.44 | 76.81 | 70.29 |
+| Qwen3-Reranker-0.6B<br> | PETQuant | 79.55 | 83.78 | 86.35 | 35.67 | 62.23 | 53.43 | 72.76 | 67.681 |
+
+## GPTQv2
+
+### Qwen2.5-VL（Visual Wi8Ai8，LLM Wi4Ai8）
+
+| Model | 数据来源 | CCBench | CMMMU_VAL | HallusionBench_aAcc | MMBench_DEV_CN | MMBench_DEV_EN | MMBench_TEST_EN | RealWorldQA | SEEDBench_IMG | Average | MME | OCRBench |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen2.5-VL-7B | bf16 | 57.45 | 35.44 | 65.09 | 81.19 | 84.11 | 82.23 | 63.66 | 76.55 | 68.22 | 2322.55 | 749 |
+| Qwen2.5-VL-7B | PETQuant | 45.49 | 28.89 | 56.99 | 72.42 | 76.98 | 75.95 | 57.65 | 74.42 | 61.1 | 2275.31 | 581 |
+| Qwen3-VL-8B | bf16 | 73.14 | 51.67 | 73.71 | 85.57 | 86.94 | 86.32 | 69.8 | 78.12 | 75.66 | 2430.89 | 851 |
+| Qwen3-VL-8B | PETQuant | 56.67 | 42.22 | 62.99 | 77.32 | 77.32 | 75.45 | 62.35 | 75.8 | 66.26 | 2111.48 | 664 |
+
+### Qwen3.5 （Visual \，LLM Wi4Af16）
+
+#### VLM
+
+| Model | 数据来源 | CCBench | CMMMU_VAL | HallusionBench_aAcc | HallusionBench_fAcc | MMBench_DEV_CN | MMBench_DEV_EN | MMBench_TEST_EN | RealWorldQA | SEEDBench_IMG | Average | MME |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3.5-2B | FP16 | 49.22 | 34.22 | 60.67 | 31.79 | 70.02 | 73.8 | 75.34 | 70.07 | 75.3 | 60.05 | 1983 |
+| Qwen3.5-2B | PETQuant | 42.94 | 31.66 | 56.57 | 28.32 | 66.07 | 70.1 | 72.59 | 67.58 | 74.66 | 56.72 | 1918 |
+| Qwen3.5-4B | FP16 | 58.04 | 38.44 | 67.4 | 44.51 | 79.55 | 80.84 | 80.94 | 75.42 | 76.76 | 64.57 | 2127 |
+| Qwen3.5-4B | PETQuant | 59.02 | 39.33 | 67.61 | 45.09 | 78.69 | 78.61 | 79.15 | 73.99 | 76.23 | 64.23 | 2160 |
+
+#### LLM
+
+| Model | 数据来源 | ceval | livecodebench | gpqa | longbenchv2 | math_prm800k_500 | mmlu_pro | Average |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3.5-2B | FP16 | 68.51 | 25.5 | 53.03 | 37.14 | 71.67 | 57.04 | 57.48 |
+| Qwen3.5-2B | PETQuant | 64.18 | 16.5 | 44.44 | 35.24 | 58 | 47.79 | 49.93 |
+| Qwen3.5-4B | FP16 | 86.25 | 79.75 | 77.58 | 50.29 | 89.8 | 78.09 | 76.96 |
+| Qwen3.5-4B | PETQuant | 85.22 | 73 | 74.75 | 46.67 | 88 | 77.7 | 74.22 |
+
+### Qwen3.5-2B混合精度量化
+
+#### LLM
+
+| Model | 数据来源 | ceval | livecodebench | gpqa | longbenchv2 | math_prm800k_500 | mmlu_pro | Average |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3.5-2B | FP16 | 68.51 | 25.5 | 53.03 | 37.14 | 71.67 | 57.04 | 57.48 |
+| Qwen3.5-2B | PETQuant | 64.18 | 16.5 | 44.44 | 35.24 | 58 | 47.79 | 49.93 |
+| Qwen3.5-2B | 混合精度量化 | 64.72 | 19 | 49.49 | 35.44 | 67.33 | 55.48 | 54.49 |
+
+#### VLM
+
+| Model | 数据来源 | CCBench | CMMMU_VAL | HallusionBench_aAcc | HallusionBench_fAcc | MMBench_DEV_CN | MMBench_DEV_EN | MMBench_TEST_EN | RealWorldQA | SEEDBench_IMG | Average | MME |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3.5-2B | FP16 | 49.22 | 34.22 | 60.67 | 31.79 | 70.02 | 73.8 | 75.34 | 70.07 | 75.3 | 60.05 | 1983 |
+| Qwen3.5-2B | PETQuant | 42.94 | 31.66 | 56.57 | 28.32 | 66.07 | 70.1 | 72.59 | 67.58 | 74.66 | 56.72 | 1918 |
+| Qwen3.5-2B | 混合精度量化 | 42.39 | 34.78 | 57.52 | 29.77 | 63.66 | 71.05 | 72.98 | 70.98 | 74.01 | 57.46 | 1950 |
+
+## OSTQuant（Wi4Ai8）
+
+| Model | 数据来源 | ceval | livecodebench | gpqa | longbenchv2 | math_prm800k_500 | mmlu_pro | ifeval |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3-8B<br>(OV Rotate=False) | bf16 | 85.13 | 89 | 58.18 | 41.33 | 93.8 | 72.45 | 91.61 |
+| Qwen3-8B<br>(OV Rotate=False) | PETQuant | 82.06 | 81.5 | 57.17 | 42.1 | 93 | 70.81 | 90.41 |
+| Qwen3-14B<br>(OV Rotate=True) | bf16 | 88.16 | 91 | 63.94 | 47.43 | 94.8 | 75.79 | 92.09 |
+| Qwen3-14B<br>(OV Rotate=True) | PETQuant | 86.31 | 88.75 | 61.82 | 44 | 93.2 | 75.61 | 91.97 |
+| Qwen3-32B<br>(OV Rotate=False) | bf16 | 89.57 | 89 | 67.37 | 50.1 | 93.8 | 78.07 | 90.89 |
+| Qwen3-32B<br>(OV Rotate=False) | PETQuant | 88.89 | 89.5 | 64.24 | 47.05 | 94 | 77.85 | 91.49 |
+
+## Quarot（Wi4Ai8）
+
+| Model | 数据来源 | ceval | livecodebench | gpqa | longbenchv2 | math_prm800k_500 | mmlu_pro | ifeval |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| DeepSeek-R1 | bf16(old) | 92.82 | 85.5 | 69.7 | 51.43 | 94.33 | 84.81 |  |
+| DeepSeek-R1 | PETQuant | 91.88 | 79.5 | 68.89 | 51.43 | 94 | 83.05 | 89.09 |
+
+## SmoothQuant（Wi8Ai8）
+
+| Model | 数据来源 | ceval | livecodebench | gpqa | longbenchv2 | math_prm800k_500 | mmlu_pro | ifeval |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3-32B | bf16 | 89.57 | 89 | 67.37 | 50.1 | 93.8 | 78.07 | 90.89 |
+| Qwen3-32B | PETQuant | 88.79 | 90.5 | 66.97 | 51.62 | 94.8 | 77.3 | 90.53 |
+
+## RTN（Wi8Ai8）
+
+per block+per group
+
+| Model | 数据来源 | ceval | livecodebench | gpqa | longbenchv2 | math_prm800k_500 | mmlu_pro | ifeval |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| DeepSeek-R1 | bf16(old) | 92.82 | 85.5 | 69.7 | 51.43 | 94.33 | 84.81 |  |
+| DeepSeek-R1 | PETQuant | 92.44 | 81.5 | 69.7 | 55.05 | 94.2 | 83.89 | 91.01 |
+
+## RTN (Wnvfp4Anvfp4)
+
+| Model | 数据来源 | ceval | livecodebench | gpqa | longbenchv2 | math_prm800k_500 | mmlu_pro | ifeval | AVERAGE |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Qwen3-32B | bf16 | 89.57 | 89 | 67.37 | 50.1 | 93.8 | 78.07 | 90.89 | 79.83 |
+| Qwen3-32B | PETQuant | 89.92 | 89.75 | 65.45 | 47.43 | 93.4 | 76.86 | 90.53 | 79.05 |
