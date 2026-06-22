@@ -111,6 +111,8 @@
 
 | Model                                      | Quant Support | Compile Support |
 | :----------------------------------------- | :-----------: | :-------------: |
+| Qwen/Qwen3.5-2B                            |      ✅       |       ✅        |
+| Qwen/Qwen3.5-4B                            |      ✅       |       ✅        |
 | Qwen/Qwen3-VL-8B                           |      ✅       |       ✅        |
 | Qwen/Qwen3-VL-4B                           |      ✅       |       ✅        |
 | Qwen/Qwen3-VL-2B                           |      ✅       |       ✅        |
@@ -1439,8 +1441,365 @@ Qwen3-VL-4b-AWQ-AOT_960x540_8192_4die_image_01230123$ tree
         └── vit_die3.so
 ```
 
+### Qwen3.5编译
+
+以``Qwen3.5-4B-gptqv2-w4a16``示例：
+
+```python
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+import argparse
+import datetime
+import glob
+import logging
+import os
+import shutil
+import sys
+
+import torch
+
+torch.distributed.constants.default_pg_timeout = datetime.timedelta(hours=5)
+
+from tyllm import torch_edgex
+from PIL import Image
+from transformers import AutoProcessor
+from vllm import LLM, SamplingParams
+from vllm.config import ModelConfig, ParallelConfig
+
+from tyllm.vllm_ext.edgex_executor import EdgeXExecutor
+
+os.environ["PATH"] = (
+    os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")
+)
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+os.environ["COMPILE_THREAD"] = "1"
 
 
+DEFAULT_MODEL = "Qwen3.5-4B-GPTQ-W4A16_LLM-X512_copy_awq-pack/"
+DEFAULT_LOCAL_MODEL = (
+    "/home/npu_toolchain/zbw/model/Qwen3.5-4B-GPTQ-W4A16_LLM-X512_copy_awq-pack/"
+)
+DEFAULT_AOT_PATH = "qwen35_4b_3die_aot"
+DEFAULT_LOCAL_AOT_PATH = "/home/npu_toolchain/zbw/model/qwen3_5_4B_3die_16k_new"
+DEFAULT_IMAGE_PATH = "/home/npu_toolchain/zbw/test/20260514-195001.jpg"
+
+
+def parse_int_list(value: str) -> list[int]:
+    return [int(item.strip()) for item in value.split(",") if item.strip()]
+
+
+def resolve_path(path: str, base_env: str | None = None) -> str:
+    if os.path.isabs(path):
+        return path
+    base = os.getenv(base_env or "")
+    if base:
+        return os.path.join(base, path)
+    return path
+
+
+def default_model_path() -> str:
+    if os.getenv("LLM_MODEL_BASE"):
+        return DEFAULT_MODEL
+    return DEFAULT_LOCAL_MODEL
+
+
+def default_aot_path() -> str:
+    if os.getenv("ARTIFACTS_PATH"):
+        return DEFAULT_AOT_PATH
+    return DEFAULT_LOCAL_AOT_PATH
+
+
+def default_image_path() -> str:
+    if os.getenv("LLM_MODEL_BASE"):
+        return "960x540.jpg"
+    if os.path.exists(DEFAULT_IMAGE_PATH):
+        return DEFAULT_IMAGE_PATH
+    return "960x540.jpg"
+
+
+def default_source_tokenizer() -> str:
+    if os.getenv("LLM_MODEL_BASE"):
+        return os.path.join(DEFAULT_MODEL, "tokenizer.json")
+    return os.path.join(DEFAULT_LOCAL_MODEL, "tokenizer.json")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="args for qwen3.5 vl build",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--seq_len",
+        nargs="+",
+        type=int,
+        default=parse_int_list(os.getenv("TYLLM_PREFILL_LENS", "1, 8, 64")),
+        help="sequence lengths for prefill",
+    )
+    parser.add_argument("--tp_size", type=int, default=3, help="tensor_parallel_size")
+    parser.add_argument(
+        "--attn_tp_size",
+        type=int,
+        default=-1,
+        help="linear attention tensor_parallel_size; -1 chooses 2 for tp>1, else 1",
+    )
+    parser.add_argument(
+        "--visual_tp_size",
+        type=int,
+        default=-1,
+        help="vision tensor_parallel_size; -1 chooses 2 for tp>1, else 1",
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default=default_model_path(),
+        help="model path; relative paths are resolved from LLM_MODEL_BASE",
+    )
+    parser.add_argument(
+        "--aot_path",
+        type=str,
+        default=default_aot_path(),
+        help="aot path; relative paths are resolved from ARTIFACTS_PATH when present",
+    )
+    parser.add_argument(
+        "--image_path",
+        type=str,
+        default=default_image_path(),
+        help="image path; relative paths are resolved from LLM_MODEL_BASE",
+    )
+    parser.add_argument(
+        "--source_tokenizer",
+        type=str,
+        default=default_source_tokenizer(),
+        help="tokenizer.json path; relative paths are resolved from LLM_MODEL_BASE",
+    )
+    parser.add_argument("--max_model_len", type=int, default=4096)
+    parser.add_argument("--max_tokens", type=int, default=200)
+    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--top_p", type=float, default=1.0)
+    parser.add_argument("--trace_only", action="store_true", help="set trace only mode")
+    parser.add_argument("--jit_exec_mode", "-j", action="store_true")
+    parser.add_argument("--text_only", action="store_true")
+    parser.add_argument("--debug_output", action="store_true")
+    return parser
+
+
+args = build_parser().parse_args()
+
+torch_edgex.set_device_trace_only("x6000", args.trace_only)
+torch_edgex.set_device_mode("compile_with_byoa", False)
+
+tp_size = args.tp_size
+seq_len = args.seq_len
+exec_mode = "JIT" if args.jit_exec_mode else "AOT"
+visual_tp_size = args.visual_tp_size if args.visual_tp_size > 0 else min(tp_size, 2)
+attn_tp_size = args.attn_tp_size if args.attn_tp_size > 0 else min(tp_size, 2)
+
+model_path = resolve_path(args.model_path, "LLM_MODEL_BASE")
+image_path = resolve_path(args.image_path, "LLM_MODEL_BASE")
+source_tokenizer = resolve_path(args.source_tokenizer, "LLM_MODEL_BASE")
+torch_edgex.set_device_mode("vl_image_path", image_path)
+if os.getenv("ARTIFACTS_PATH") and not os.path.isabs(args.aot_path):
+    aot_path = os.path.join(os.getenv("ARTIFACTS_PATH", ""), args.aot_path)
+else:
+    aot_path = args.aot_path
+
+torch_edgex.set_device_mode("exec_mode", exec_mode)
+torch_edgex.set_device_mode("visual_tp_size", visual_tp_size)
+torch_edgex.set_device_mode("attn_tp_size", attn_tp_size)
+torch_edgex.set_device_mode("eager_on_chip", False)
+torch_edgex.set_device_mode("prefill_lens", seq_len)
+torch_edgex.set_device_mode("AOT_DIR", aot_path)
+
+logging.getLogger("vllm").setLevel(logging.WARNING)
+
+torch._dynamo.reset()
+
+ModelConfig.verify_with_parallel_config = lambda a, b: True
+origin_post_init = ParallelConfig.__post_init__
+
+
+def modified_post_init(self):
+    origin_post_init(self)
+    self.world_size = tp_size
+
+
+ParallelConfig.__post_init__ = modified_post_init
+
+
+def build_prompt(processor: AutoProcessor, text_only: bool) -> str:
+    if text_only:
+        messages = [
+            {
+                "role": "user",
+                "content": "请用一句话介绍北京。",
+            }
+        ]
+    else:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": "请描述这张图片的内容。"},
+                ],
+            }
+        ]
+
+    return processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+
+
+def main():
+    import vllm.envs as envs
+
+    envs.VLLM_ENABLE_V1_MULTIPROCESSING = False
+    envs.VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS = None
+
+    processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+    prompt = build_prompt(processor, args.text_only)
+    image = None
+    if not args.text_only:
+        image = Image.open(image_path).convert("RGB")
+        image = image.resize((640, 352))
+
+    llm = LLM(
+        model=model_path,
+        tensor_parallel_size=tp_size,
+        max_model_len=args.max_model_len,
+        tokenizer=model_path,
+        distributed_executor_backend=EdgeXExecutor,
+        dtype="half",
+        worker_cls="tyllm.vllm_ext.edgex_executor.EdgeXWorker",
+        block_size=64,
+        mm_processor_kwargs={
+            "min_pixels": 16 * 32 * 32,
+            "max_pixels": 1024 * 32 * 32,
+        },
+        gpu_memory_utilization=0.5,
+        mm_processor_cache_gb=0,
+        enable_prefix_caching=False,
+        enforce_eager=True,
+    )
+    sampling_params = SamplingParams(
+        temperature=args.temperature,
+        top_p=args.top_p,
+        seed=0,
+        max_tokens=args.max_tokens,
+        logprobs=5 if args.debug_output or os.getenv("TYLLM_DEBUG_OUTPUT") else None,
+    )
+
+    if args.text_only:
+        request = {"prompt": prompt}
+    else:
+        request = {
+            "prompt": prompt,
+            "multi_modal_data": {"image": image},
+        }
+
+    _ = llm.generate(request, sampling_params=sampling_params, use_tqdm=False)
+
+    compiled_root_dir = os.path.join(aot_path, f"{tp_size}die")
+    mrope_dir = os.path.join(compiled_root_dir, "mrope")
+    visual_dir = os.path.join(compiled_root_dir, "visual")
+
+    try:
+        print("编译完成，开始处理生成的文件...")
+
+        print(f"处理 {mrope_dir} 下的文件...")
+        mrope_so_files = glob.glob(os.path.join(mrope_dir, "*.so"))
+        mrope_params_files = glob.glob(os.path.join(mrope_dir, "*.params"))
+
+        if mrope_so_files:
+            shutil.copy2(
+                mrope_so_files[0],
+                os.path.join(compiled_root_dir, "compute_rope_param.so"),
+            )
+
+        if mrope_params_files:
+            shutil.copy2(
+                mrope_params_files[0],
+                os.path.join(compiled_root_dir, "compute_rope_param.params"),
+            )
+
+        if not args.text_only:
+            print(f"处理 {visual_dir} 下的文件...")
+
+            aot_config_files = glob.glob(os.path.join(visual_dir, "*aot_config.json"))
+            if aot_config_files:
+                os.replace(aot_config_files[0], os.path.join(visual_dir, "aot_config.json"))
+
+            buffer_config_files = glob.glob(os.path.join(visual_dir, "*buffer_config.json"))
+            if buffer_config_files:
+                os.replace(
+                    buffer_config_files[0],
+                    os.path.join(visual_dir, "buffer_config.json"),
+                )
+
+            for i in range(tp_size):
+                so_files = glob.glob(os.path.join(visual_dir, f"*die{i}.so"))
+                if so_files:
+                    os.replace(so_files[0], os.path.join(visual_dir, f"vit_die{i}.so"))
+
+                param_files = glob.glob(os.path.join(visual_dir, f"*die{i}.params"))
+                if param_files:
+                    os.replace(
+                        param_files[0],
+                        os.path.join(visual_dir, f"constant_die{i}.params"),
+                    )
+
+        if source_tokenizer and os.path.exists(source_tokenizer):
+            shutil.copy2(
+                source_tokenizer,
+                os.path.join(compiled_root_dir, "tokenizer.json"),
+            )
+
+        print("文件处理完成!")
+    except Exception as e:
+        print(f"文件处理过程中发生错误: {e}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**使用说明**：
+
+纯语言编译：
+```bash
+python3 build.py --model_path /data/quantized_model/Qwen3.5-4B-GPTQv2-W4A16 --aot_path /data/aot/Qwen3.5-4B-GPTQv2-W4A16 --tp_size 3 --seq_len 1 8 64 --max_model_len 4096 --trace_only --text_only
+```
+
+多模态编译：
+```bash
+python3 build.py --model_path /data/quantized_model/Qwen3.5-4B-GPTQv2-W4A16 --aot_path /data/aot/Qwen3.5-4B-GPTQv2-W4A16 --image_path /data/test.jpg --tp_size 3 --seq_len 1 8 64 --max_model_len 4096 --trace_only
+```
+
+**参数说明**：
+- **model_path**：量化模型目录。
+- **aot_path**：AOT 编译产物输出目录。
+- **image_path**：多模态编译时使用的输入图片路径。
+- **tp_size**：编译使用的 die 数，也即张量并行数。
+- **seq_len**：预填充长度列表；当前最大支持 ``64``。
+- **max_model_len**：模型最大上下文长度。
+- **trace_only**：是否开启 trace only 模式。
+- **text_only**：是否按纯语言模型路径编译。
 
 ## 常见问题
 
@@ -1466,10 +1825,10 @@ GPU环境须限制编译线程环境变量
 
 | 模型 | 量化方法（W4A16） | 支持量化 | 混合量化 | LM Head | 支持编译 |
 | --- | --- | :---: | :---: | :---: | :---: |
-| Qwen2.5-3B | AWQ | √ |  | × | √ |
-| Qwen2.5-3B | GPTQv2 |  |  | × | √ |
-| Qwen2.5-VL-3B | AWQ | √ | - | × | √ |
-| Qwen2.5-VL-3B | GPTQv2 | √ | - | × | √ |
+| Qwen2.5-3B | AWQ | √ | × | × | √ |
+| Qwen2.5-3B | GPTQv2 | × | × | × | √ |
+| Qwen2.5-VL-3B | AWQ | √ | × | × | √ |
+| Qwen2.5-VL-3B | GPTQv2 | √ | × | × | √ |
 | Qwen3-1.7B | AWQ | √ | - | × | √ |
 | Qwen3-1.7B | GPTQv2 | √ | √ | × | √ |
 | Qwen3-4B | AWQ | √ | - | × | √ |
