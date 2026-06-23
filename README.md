@@ -1446,6 +1446,7 @@ Qwen3-VL-4b-AWQ-AOT_960x540_8192_4die_image_01230123$ tree
 以``Qwen3.5-4B-gptqv2-w4a16``示例：
 
 ```python
+
 import argparse
 import datetime
 import glob
@@ -1472,7 +1473,6 @@ os.environ["PATH"] = (
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 os.environ["COMPILE_THREAD"] = "1"
 
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="args for qwen3.5 build", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--seq_len", nargs="+", type=int, default=[1, 8, 64], help="sequence lengths for prefill")
@@ -1483,6 +1483,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aot_path", type=str, default="/data/aot/Qwen3.5-4B-GPTQv2-W4A16", help="aot output path")
     parser.add_argument("--image_path", type=str, default="/data/test.jpg", help="image path")
     parser.add_argument("--source_tokenizer", type=str, default="/data/tokenizer.json", help="tokenizer.json path")
+
     parser.add_argument("--max_model_len", type=int, default=4096)
     parser.add_argument("--max_tokens", type=int, default=200)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -1511,6 +1512,7 @@ source_tokenizer = args.source_tokenizer
 aot_path = args.aot_path
 
 torch_edgex.set_device_mode("vl_image_path", image_path)
+
 torch_edgex.set_device_mode("exec_mode", exec_mode)
 torch_edgex.set_device_mode("visual_tp_size", visual_tp_size)
 torch_edgex.set_device_mode("attn_tp_size", attn_tp_size)
@@ -1607,7 +1609,7 @@ def main():
             "multi_modal_data": {"image": image},
         }
 
-    _ = llm.generate(request, sampling_params=sampling_params)
+    _ = llm.generate(request, sampling_params=sampling_params, use_tqdm=False)
 
     compiled_root_dir = os.path.join(aot_path, f"{tp_size}die")
     mrope_dir = os.path.join(compiled_root_dir, "mrope")
