@@ -1011,6 +1011,20 @@ die_num = 4
 # 是否将embedding操作作为输入，默认False；如果True，embedding计算将被offload到cpu
 embedding_as_input = False
 
+def build_rope_hf_overrides(model_dir):
+    config_path = os.path.join(model_dir, "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        raw_config = json.load(f)
+
+    rope_parameters = raw_config.get("rope_parameters")
+    if isinstance(rope_parameters, dict):
+        rope_theta = rope_parameters.get("rope_theta")
+        if rope_theta is not None:
+            print(f"同步 rope_parameters.rope_theta 到 hf_overrides.rope_theta: {rope_theta}")
+            return {"rope_theta": rope_theta}
+
+    return {}
+
 def main():
     os.environ.setdefault("COMPILE_THREAD", "1")
 
@@ -1032,6 +1046,7 @@ def main():
 
     envs.VLLM_ENABLE_V1_MULTIPROCESSING = False
     envs.VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS = None
+    hf_overrides = build_rope_hf_overrides(args.model_dir)
 
     engine = None
     try:
@@ -1045,6 +1060,7 @@ def main():
                 dtype="half",
                 worker_cls="tyllm.vllm_ext.edgex_executor.EdgeXWorker",
                 block_size=64,
+                hf_overrides=hf_overrides,
             )
             engine = LLMEngine.from_engine_args(engine_args)
 
@@ -1563,6 +1579,25 @@ def build_prompt(processor: AutoProcessor, text_only: bool) -> str:
     )
 
 
+def build_rope_hf_overrides(model_dir):
+    config_path = os.path.join(model_dir, config.json)
+    with open(config_path, r, encoding=utf-8) as f:
+        raw_config = json.load(f)
+
+    rope_parameters = raw_config.get(rope_parameters)
+    if not isinstance(rope_parameters, dict):
+        text_config = raw_config.get(text_config, {})
+        rope_parameters = text_config.get(rope_parameters)
+
+    if isinstance(rope_parameters, dict):
+        rope_theta = rope_parameters.get(rope_theta)
+        if rope_theta is not None:
+            print(f"同步 rope_parameters.rope_theta 到 hf_overrides.rope_theta: {rope_theta}")
+            return {rope_theta: rope_theta}
+
+    return {}
+
+
 def main():
     import vllm.envs as envs
 
@@ -1571,6 +1606,7 @@ def main():
 
     processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
     prompt = build_prompt(processor, args.text_only)
+    hf_overrides = build_rope_hf_overrides(args.model_dir)
     image = None
     if not args.text_only:
         image = Image.open(image_path).convert("RGB")
@@ -1592,6 +1628,7 @@ def main():
         gpu_memory_utilization=0.5,
         mm_processor_cache_gb=0,
         enable_prefix_caching=False,
+        hf_overrides=hf_overrides,
         enforce_eager=True,
     )
     sampling_params = SamplingParams(
