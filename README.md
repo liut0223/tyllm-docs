@@ -3,12 +3,24 @@
 # 更新说明
 
 本文记录了``Edge10``系列大模型工具链的变更情况。
+**20260715/v1.2.3**
+
+- 🚀量化工具更新 (v1.1.3)
+    - 支持 Qwen3.5 AutoRound敏感层分析和混合精度量化
+- 🚀更新量化工具镜像
+    - 镜像地址：`113.100.143.90:8091/edgex/tyquantize:v1.1.3`
+
+- 🚀编译工具更新 (v1.2.3)
+    - 优化VIT部分精度
+    - 优化编译速度，Qwen3.5-2B-3die编译时间从3.5->2小时以内。
+- 🚀更新编译工具镜像
+    - 镜像地址：`113.100.143.90:8091/edgex/tyllm:v1.2.3`
 
 **20260622/v1.1.2**
 
 - 🚀量化工具更新 (v1.1.2)
     - 新增 Qwen3.5 autoround w4a16量化支持
-    - 新增 Qwen3.5 autoround llmhead量化支持
+    - 新增 Qwen3.5 autoround lmhead量化支持
 - 🚀更新量化工具镜像
     - 镜像地址：`113.100.143.90:8091/edgex/tyquantize:v1.1.2`
 - 🚀更新量化工具使用说明
@@ -256,7 +268,7 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 - `/opt/app/configs/dataset_configs`
   - 校准/评测数据配置，命名规则为 `算法_模型_calib.json` 或 `算法_模型_eval.json`
 - `/opt/app/configs/unified_configs`
-  - 推荐使用的一体化配置，例如 `autoround_qwen3_5_task1.json`、`autoround_qwen3_5_task2.json`、`autoround_qwen3_5_task3.json`、`awq_qwen3.json`、`gptqv2_qwen3.json`、`ostquant_qwen3.json`
+  - 推荐使用的一体化配置，例如 `autoround_qwen3_5_w4a16_per_group_default.json`、`autoround_qwen3_5_w4a16_per_group_lm_head.json`、`autoround_qwen3_5_w4a16_per_group_lm_head_tie_embed.json`、`awq_qwen3.json`、`gptqv2_qwen3.json`、`ostquant_qwen3.json`
 - `/opt/app/configs/sampling_configs`
   - 推理验证默认参数，当前镜像包含 `llm_default.json`、`vlm_default.json`、`reranker_default.json`
 - `/opt/app/tools/llm_sensitivity_analysis`
@@ -382,7 +394,7 @@ docker run -it --name vllm_custom --gpus all -v  /data/:/data/ --ipc host  -p 80
 
 - 当前 `tyquantize:v1.1.2` 量化镜像内 `transformers` 已升级到 `5.8.0`。
 - Qwen3.5 混合量化产物依赖更新的 vLLM / transformers 支持，不能使用 `192.168.14.129:80/library/aied/custom-vllm:0.11.0` 进行部署或冒烟测试。请使用已适配 Qwen3.5 架构的新版 vLLM 环境。
-- Qwen3.5 AutoRound task2 / task3 会量化 `lm_head`，部署时同样需要使用定制 vLLM；启动命令设置 `--dtype half`，不要手动添加 `--quantization awq`。
+- Qwen3.5 AutoRound quant_lm_head 会量化 `lm_head`，部署时同样需要使用定制 vLLM；启动命令设置 `--dtype half`，不要手动添加 `--quantization awq`。
 - `192.168.14.129:80/library/aied/custom-vllm:0.11.0` 仅用于当前文档中的 W4A8 量化模型及已验证兼容的 Qwen3 量化 / 混合量化模型测试。
 
 
@@ -404,7 +416,7 @@ v1.1.2 版本支持以下量化算法，以下内容依据镜像内 `/opt/app/te
 - 所有量化算法均不支持 Attention 层量化
 - `ostquant` 仍按“两阶段”顺序执行：先进行 OSTQuant 训练，再进行 GPTQv2 实量化
 - 对于 VLM，多子模块量化场景通常需要传入多份 `quant_config` / `alg_config`，或直接使用对应的 `unified_config`
-- Qwen3.5 AutoRound 支持两类配置：task1 不量化 `lm_head`；task2 / task3 量化 `lm_head`。task3 需要基于 task2 的输出模型继续处理，用于 `tie_word_embeddings=true` 场景
+- Qwen3.5 AutoRound 支持三类配置：default 不量化 `lm_head`；quant_lm_head_without_tie_embed 量化 `lm_head`，用于 `tie_word_embeddings=false` 场景。quant_lm_head_with_tie_embed 量化 `lm_head`，用于 `tie_word_embeddings=true` 场景
 - Qwen3.5 的 GPTQv2 W4A16 配置默认只量化 LLM 子模块，`submodel_0` 保持不量化；`fallback` 会跳过 `lm_head`、`mtp.*` 和 `linear_attn.*`
 
 ---
@@ -445,9 +457,9 @@ python3 test/test.py \
 
 | 算法 | 统一配置文件 | 说明 |
 |------|--------------|------|
-| AutoRound | `autoround_qwen3_5_task1.json` | Qwen3.5，LLM W4A16，不量化 lm_head |
-| AutoRound | `autoround_qwen3_5_task2.json` | Qwen3.5，LLM W4A16，量化 lm_head，`tie_word_embeddings=false` |
-| AutoRound | `autoround_qwen3_5_task3.json` | Qwen3.5，LLM W4A16，量化 lm_head，`tie_word_embeddings=true`，基于 task2 输出模型派生 |
+| AutoRound | `autoround_qwen3_5_w4a16_per_group_default.json` | Qwen3.5，LLM W4A16，不量化 lm_head |
+| AutoRound | `autoround_qwen3_5_w4a16_per_group_lm_head.json` | Qwen3.5，LLM W4A16，量化 lm_head，`tie_word_embeddings=false` |
+| AutoRound | `autoround_qwen3_5_w4a16_per_group_lm_head_tie_embed.json` | Qwen3.5，LLM W4A16，量化 lm_head，`tie_word_embeddings=true` |
 | AWQ | `awq_qwen3.json` | Qwen3 LLM |
 | AWQ | `awq_qwen3_vl.json` | Qwen3-VL，多子模块 |
 | AWQ | `awq_qwen2_5.json` | Qwen2.5 LLM |
@@ -537,44 +549,42 @@ python3 test/test_unified_config.py \
 
 > Qwen3.5 W4A16 / W4A16 混合精度量化建议显式指定 `--torch-dtype bfloat16`。若模型配置包含 `vision_config`，请先按“VLM / Qwen3.5 回归验证图片准备”放置默认 smoke test 图片。
 
-#### AutoRound：Qwen3.5 W4A16，不量化 lm_head
+#### AutoRound：Qwen3.5 W4A16，default: 不量化 lm_head
 
 AutoRound 使用 `NeelNanda_pile-10k` 作为校准数据集。量化过程中可能出现 `Deterministic behavior` 相关 `UserWarning`，不影响量化；如需规避，可在命令前增加 `CUBLAS_WORKSPACE_CONFIG=:4096:8`。
 
 ```bash
 cd /opt/app
 CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false python3 test/test_unified_config.py \
-  --unified-config-file configs/unified_configs/autoround_qwen3_5_task1.json \
+  --unified-config-file configs/unified_configs/autoround_qwen3_5_w4a16_per_group_default.json \
   --model-path /data/models/Qwen3.5-2B \
   --dataset-path /data/datasets/NeelNanda_pile-10k \
-  --save-path /data/quant_models/Qwen3.5-2B-AutoRound-task1
+  --save-path /data/quant_models/Qwen3.5-2B-AutoRound-default
 ```
 
-#### AutoRound：Qwen3.5 W4A16，量化 lm_head，`tie_word_embeddings=false`
+#### AutoRound：Qwen3.5 W4A16，quant_lm_head_without_tie_embed: 量化 lm_head，`tie_word_embeddings=false`
 
 ```bash
 cd /opt/app
 CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false python3 test/test_unified_config.py \
-  --unified-config-file configs/unified_configs/autoround_qwen3_5_task2.json \
+  --unified-config-file configs/unified_configs/autoround_qwen3_5_w4a16_per_group_lm_head.json \
   --model-path /data/models/Qwen3.5-2B \
   --dataset-path /data/datasets/NeelNanda_pile-10k \
-  --save-path /data/quant_models/Qwen3.5-2B-AutoRound-task2
+  --save-path /data/quant_models/Qwen3.5-2B-AutoRound-lm_head
 ```
 
-#### AutoRound：Qwen3.5 W4A16，量化 lm_head，`tie_word_embeddings=true`
-
-task3 需要在 task2 输出模型上派生，先完成 task2，再将 `--model-path` 指向 task2 的输出模型路径。
+#### AutoRound：Qwen3.5 W4A16，quant_lm_head_with_tie_embed: 量化 lm_head，`tie_word_embeddings=true`
 
 ```bash
 cd /opt/app
 CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false python3 test/test_unified_config.py \
-  --unified-config-file configs/unified_configs/autoround_qwen3_5_task3.json \
-  --model-path /data/quant_models/Qwen3.5-2B-AutoRound-task2 \
+  --unified-config-file configs/unified_configs/autoround_qwen3_5_w4a16_per_group_lm_head_tie_embed.json \
+  --model-path /data/models/Qwen3.5-2B \
   --dataset-path /data/datasets/NeelNanda_pile-10k \
-  --save-path /data/quant_models/Qwen3.5-2B-AutoRound-task3
+  --save-path /data/quant_models/Qwen3.5-2B-AutoRound-lm_head_tie_embed
 ```
 
-> AutoRound task2 / task3 量化了 `lm_head`，部署时需要使用定制 vLLM 镜像；启动命令设置 `--dtype half`，不要手动添加 `--quantization awq`。
+> AutoRound quant_lm_head 量化了 `lm_head`，部署时需要使用定制 vLLM 镜像；启动命令设置 `--dtype half`，不要手动添加 `--quantization awq`。
 
 #### GPTQv2：Qwen3-VL（视觉 W8A8 + LLM W4A8）
 
@@ -824,8 +834,8 @@ python3 -m vllm.entrypoints.openai.api_server \
 常见选择：
 
 - GPTQv2 W4A16 / W4A16 混合精度量化模型：优先使用 `--quantization awq`，不要使用 `awq_triton_w4a8`。
-- AutoRound task1（不量化 `lm_head`）：按目标 vLLM 环境的 AutoRound 支持方式部署。
-- AutoRound task2 / task3（量化 `lm_head`）：使用定制 vLLM，设置 `--dtype half`，不要手动添加 `--quantization awq`。
+- AutoRound default（不量化 `lm_head`）：按目标 vLLM 环境的 AutoRound 支持方式部署。
+- AutoRound quant_lm_head（量化 `lm_head`）：使用定制 vLLM，设置 `--dtype half`，不要手动添加 `--quantization awq`。
 - W4A8 量化模型：使用定制 vLLM，并按模型适配情况选择 `--quantization awq_triton_w4a8`。
 - 若模型 `config.json` 已包含可被 vLLM 自动识别的 `quantization_config`，仍建议按上面的产物类型显式选择部署参数，避免不同 vLLM 版本自动识别行为不一致。
 - `--tensor-parallel-size` 按模型规模和 GPU 数设置；小模型冒烟测试通常单卡即可，不需要照抄 32B 示例中的 `--tensor-parallel-size 4`。
@@ -984,6 +994,7 @@ sudo docker run --gpus all -v ${your_data_dir}:/data -it 113.100.143.90:8091/edg
 
 ```python
 import os
+import json
 
 import torch
 from transformers import AutoTokenizer
@@ -1046,7 +1057,7 @@ def main():
 
     envs.VLLM_ENABLE_V1_MULTIPROCESSING = False
     envs.VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS = None
-    hf_overrides = build_rope_hf_overrides(args.model_dir)
+    hf_overrides = build_rope_hf_overrides(quant_path)
 
     engine = None
     try:
@@ -1177,6 +1188,7 @@ aot_dir = f"./{Path(args.model_dir).name}_{input_size[1]}x{input_size[0]}_{args.
 
 # 配置torch_edgex
 torch_edgex.edgex_module.set_trace_only_mode(True)
+torch_edgex.set_device_mode("compile_with_byoa", False)
 torch_edgex.set_device_mode("exec_mode", "AOT")
 torch_edgex.set_device_mode("eager_on_chip", False)
 # torch_edgex.set_device_mode("attn_tp_size", args.num_die) # 除了qwen3-32B tp16以外的所有模型都不要配置这个变量
@@ -1471,6 +1483,7 @@ import logging
 import os
 import shutil
 import sys
+import json
 
 import torch
 
@@ -1580,20 +1593,20 @@ def build_prompt(processor: AutoProcessor, text_only: bool) -> str:
 
 
 def build_rope_hf_overrides(model_dir):
-    config_path = os.path.join(model_dir, config.json)
-    with open(config_path, r, encoding=utf-8) as f:
+    config_path = os.path.join(model_dir, "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
         raw_config = json.load(f)
 
-    rope_parameters = raw_config.get(rope_parameters)
+    rope_parameters = raw_config.get("rope_parameters")
     if not isinstance(rope_parameters, dict):
-        text_config = raw_config.get(text_config, {})
-        rope_parameters = text_config.get(rope_parameters)
+        text_config = raw_config.get("text_config", {})
+        rope_parameters = text_config.get("rope_parameters")
 
     if isinstance(rope_parameters, dict):
-        rope_theta = rope_parameters.get(rope_theta)
+        rope_theta = rope_parameters.get("rope_theta")
         if rope_theta is not None:
             print(f"同步 rope_parameters.rope_theta 到 hf_overrides.rope_theta: {rope_theta}")
-            return {rope_theta: rope_theta}
+            return {"rope_theta": rope_theta}
 
     return {}
 
@@ -1606,7 +1619,7 @@ def main():
 
     processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
     prompt = build_prompt(processor, args.text_only)
-    hf_overrides = build_rope_hf_overrides(args.model_dir)
+    hf_overrides = build_rope_hf_overrides(model_path)
     image = None
     if not args.text_only:
         image = Image.open(image_path).convert("RGB")
@@ -1647,7 +1660,7 @@ def main():
             "multi_modal_data": {"image": image},
         }
 
-    _ = llm.generate(request, sampling_params=sampling_params, use_tqdm=False)
+    _ = llm.generate(request, sampling_params=sampling_params)
 
     compiled_root_dir = os.path.join(aot_path, f"{tp_size}die")
     mrope_dir = os.path.join(compiled_root_dir, "mrope")
@@ -1755,30 +1768,55 @@ GPU环境须限制编译线程环境变量
 **解决方法**：
 保持文档中编译脚本各操作先后顺序不做改动。
 
+### 3. 同时运行不同版本编译工具链编译的模型，导致输出乱码
+
+**问题描述**：
+旧版工具链编译的模型和新版编译的模型混用，如果新旧版本差距过大会有问题：两个模型的主die配置相同，可能会造成通信混乱，产生死循环直到cache耗尽现象，且输出乱码
+
+**解决方法**：
+使用同一编译工具链版本编译的模型。如果要混用必须确保模型主die全都是错开的。
+
+### 4. 编译qwen3.5配置max_model_len=1024时，出现长时间卡在执行前不推进的状态
+
+**问题描述**：
+blocks根据max_model_len=1024估算，因为max_model_len太小，blocks就估算的太小，vllm认为放不下所有的kvcache，就会卡住
+
+**解决方法**：
+要不就配置更大的max_model_len；要不手动固定blocks数量：编译脚本中添加参数num_gpu_blocks_override=32。
+
+### 5. 编译阶段出现 ValueError: "qwen3_5" not recognize
+
+**问题描述**：
+显示不识别qwen3_5，实际上是缺少了video_preprocessor_config.json文件导致的降级操作，走进了错误的分支
+
+**解决方法**：
+按照原模型目录下所有json文件，补齐量化后模型目录下json文件
+
 # 附录一：已验证模型
 
 | 模型 | 量化方法（W4A16） | 支持量化 | 混合量化 | LM Head | 支持编译 |
 | --- | --- | :---: | :---: | :---: | :---: |
 | Qwen2.5-3B | AWQ | √ | × | × | √ |
-| Qwen2.5-3B | GPTQv2 | × | × | × | √ |
 | Qwen2.5-VL-3B | AWQ | √ | × | × | √ |
 | Qwen2.5-VL-3B | GPTQv2 | √ | × | × | √ |
-| Qwen3-1.7B | AWQ | √ | - | × | √ |
+| Qwen3-1.7B | AWQ | √ | √ | × | √ |
 | Qwen3-1.7B | GPTQv2 | √ | √ | × | √ |
-| Qwen3-4B | AWQ | √ | - | × | √ |
+| Qwen3-4B | AWQ | √ | √ | × | √ |
 | Qwen3-4B | GPTQv2 | √ | √ | × | √ |
-| Qwen3-8B | AWQ | √ | - | × | √ |
+| Qwen3-8B | AWQ | √ | √ | × | √ |
 | Qwen3-8B | GPTQv2 | √ | √ | × | √ |
-| Qwen3-VL-2B | AWQ | √ | - | × | √ |
-| Qwen3-VL-2B | GPTQv2 | √ | - | × | √ |
-| Qwen3-VL-4B | AWQ | √ | - | × | √ |
-| Qwen3-VL-4B | GPTQv2 | √ | - | × | √ |
-| Qwen3-VL-8B | AWQ | √ | - | × | √ |
-| Qwen3-VL-8B | GPTQv2 | √ | - | × | √ |
-| Qwen3.5-2B | GPTQv2 | √ | √ | √ | √ |
-| Qwen3.5-2B | AutoRound | √ | × | √ | √ |
-| Qwen3.5-4B | GPTQv2 | √ | √ | √ | √ |
-| Qwen3.5-4B | AutoRound | √ | × | √ | √ |
+| Qwen3-VL-2B | AWQ | √ | √ | × | √ |
+| Qwen3-VL-2B | GPTQv2 | √ | √ | × | √ |
+| Qwen3-VL-4B | AWQ | √ | √ | × | √ |
+| Qwen3-VL-4B | GPTQv2 | √ | √ | × | √ |
+| Qwen3-VL-8B | AWQ | √ | √ | × | √ |
+| Qwen3-VL-8B | GPTQv2 | √ | √ | × | √ |
+| Qwen3.5-0.8B | GPTQv2 | √ | √ | × | √ |
+| Qwen3.5-0.8B | AutoRound | √ | √ | √ | √ |
+| Qwen3.5-2B | GPTQv2 | √ | √ | × | √ |
+| Qwen3.5-2B | AutoRound | √ | √ | √ | √ |
+| Qwen3.5-4B | GPTQv2 | √ | √ | × | √ |
+| Qwen3.5-4B | AutoRound | √ | √ | √ | √ |
 
 # 附录二：已验证模型精度
 
