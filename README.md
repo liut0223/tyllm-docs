@@ -3,9 +3,15 @@
 # 更新说明
 
 本文记录了``Edge10``系列大模型工具链的变更情况。
+**20260811/v1.2.4**
+
+- 🚀编译工具更新(v1.2.4beta2)
+    - lora编译脚本优化
+    - 修复一些已知问题
+- 🚀更新编译工具使用说明
 **20260725/v1.2.4**
 
-- 🚀编译工具更新(v1.2.4)
+- 🚀编译工具更新(v1.2.4beta)
     - 支持多槽位LoRA模型编译
     - 支持LoRA权重转换
 - 🚀更新编译工具使用说明
@@ -1756,28 +1762,56 @@ python3 build.py --model_path /data/quantized_model/Qwen3.5-4B-GPTQv2-W4A16 --ao
 
 ### Qwen3.5 LoRA编译
 
-以``Qwen3.5-4B-gptqv2-w4a16``示例：
+以``Qwen3.5-2B-autoround-awq``示例：
 
 ```python
+"""Compile and smoke-test Qwen3.5-2B Multi-LoRA AOT on 3 dies."""
 
-import argparse
-import datetime
-import gc
-import glob
-import json
 import logging
 import os
-import shutil
 import sys
-from dataclasses import asdict
+from pathlib import Path
 
-os.environ["TYLLM_MULTI_LORA_LL"] = "1"
-os.environ["TYLLM_MULTI_LORA_FUSE_BASE"] = "0"
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "python"))
 
 import torch
-torch.distributed.constants.default_pg_timeout = datetime.timedelta(hours=5)
-
 from tyllm import torch_edgex
+
+
+TP_SIZE = 3
+MAX_LORAS = 3
+MAX_LORA_RANK = 8
+
+MODEL_PATH = os.getenv(
+    "TYLLM_MODEL_PATH",
+    "/data/quantized_model/Qwen3.5-2B-AutoRound-awq",
+)
+LORA_ADAPTER_PATH = os.getenv(
+    "TYLLM_LORA_ADAPTER_PATH",
+    "/data/lora/qwen35_2b_lora_3die/lora_delivery",
+)
+AOT_DIR = os.getenv(
+    "TYLLM_AOT_DIR",
+    "/data/aot/Qwen3.5-2B-AutoRound-awq-lora",
+)
+IMAGE_PATH = os.getenv(
+    "TYLLM_IMAGE_PATH",
+    "/data/test.jpg",
+)
+PREFILL_LENS = [
+    int(value)
+    for value in os.getenv("TYLLM_PREFILL_LENS", "1,64").split(",")
+    if value.strip()
+]
+
+os.environ["PATH"] = (
+    os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")
+)
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+os.environ["TYLLM_AOT_LORA_PATH"] = LORA_ADAPTER_PATH
+os.environ["COMPILE_THREAD"] = "1"
 
 from PIL import Image
 from transformers import AutoProcessor
@@ -1785,293 +1819,106 @@ from vllm import LLM, SamplingParams
 from vllm.config import ModelConfig, ParallelConfig
 from vllm.lora.request import LoRARequest
 
+
 from tyllm.vllm_ext.edgex_executor import EdgeXExecutor
-from utils import (
-    cleanup_failed_directory,
-    cleanup_redundant_outputs,
-    generate_md5_file,
-    transform_tokenizer_merges,
-)
-
-os.environ["PATH"] = os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", "")
-os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-os.environ["COMPILE_THREAD"] = "1"
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="args for qwen3.5 build", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--model_dir", type=str, default="/data/wr/workspace/llm_tool/tyquantize/v1.1.2/Qwen3.5-2B-AutoRound-task3", help="model path")
-    parser.add_argument("--model_save", type=str, default="/data/pipline/compiled_models2026/Qwen3.5-2B-AutoRound-task3", help="compiled model root path")
-    parser.add_argument(
-        "--source_tokenizer",
-        type=str,
-        default=None,
-        help=(
-            "tokenizer.json copied to the compiled artifact root; "
-            "when omitted, convert <model_dir>/tokenizer.json"
-        ),
+torch_edgex.set_device_mode("jit_device", os.getenv("TYLLM_JIT_DEVICE", "cuda"))
+torch_edgex.set_device_mode("exec_mode", "AOT")
+torch_edgex.set_device_mode("AOT_DIR", AOT_DIR)
+torch_edgex.set_device_mode("eager_on_chip", False)
+torch_edgex.set_device_mode("visual_tp_size", 2)
+torch_edgex.set_device_mode("attn_tp_size", 2)
+torch_edgex.set_device_mode("linear_attn_tp_size", TP_SIZE)
+torch_edgex.set_device_mode("linear_attn_out_proj_tp_size", TP_SIZE)
+torch_edgex.set_device_mode("prefill_lens", PREFILL_LENS)
+torch_edgex.set_device_mode("batch_list", [1])
+torch_edgex.set_device_mode("vl_image_path", IMAGE_PATH)
+torch_edgex.set_device_trace_only("x6000", True)
+
+logging.getLogger("vllm").setLevel(logging.WARNING)
+torch._dynamo.reset()
+
+ModelConfig.verify_with_parallel_config = lambda _self, _parallel: True
+original_post_init = ParallelConfig.__post_init__
+
+
+def modified_post_init(self):
+    original_post_init(self)
+    self.world_size = TP_SIZE
+
+
+ParallelConfig.__post_init__ = modified_post_init
+
+
+def main():
+    import vllm.envs as envs
+
+    envs.VLLM_ENABLE_V1_MULTIPROCESSING = False
+    envs.VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS = None
+
+    processor = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True)
+    image = Image.open(IMAGE_PATH).convert("RGB").resize((640, 352))
+    prompt = processor.apply_chat_template(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": "请描述这张图片。"},
+                ],
+            }
+        ],
+        tokenize=False,
+        add_generation_prompt=True,
     )
-    parser.add_argument("--image_path", type=str, default="/data/wr/workspace/llm_tool/960_540.jpg", help="image path")
-    parser.add_argument("--num_die", type=int, default=3, help="tensor_parallel_size")
-    parser.add_argument("--user", type=int, default=8, choices=[1, 8], help="user count; 1 -> [1, prefill], 8 -> [1, 8, prefill]")
-    parser.add_argument("--prefill_lens", type=int, default=64, help="maximum prefill sequence length")
-    parser.add_argument("--attn_tp_size", type=int, default=-1, help="linear attention tensor_parallel_size; -1 chooses 2 for tp>1, else 1")
-    parser.add_argument("--visual_tp_size", type=int, default=-1, help="vision tensor_parallel_size; -1 chooses 2 for tp>1, else 1")
-    parser.add_argument("--max_model_len", type=int, default=4096)
-    parser.add_argument("--max_tokens", type=int, default=200)
-    parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--top_p", type=float, default=1.0)
-    parser.add_argument("--trace_only", action="store_true", help="set trace only mode")
-    parser.add_argument("--jit_exec_mode", "-j", action="store_true")
-    parser.add_argument("--text_only", action="store_true")
-    parser.add_argument("--debug_output", action="store_true")
-    parser.add_argument("--modality", type=str, default="image", choices=["image", "video"], help="input modality")
-    parser.add_argument("--simplify", action=argparse.BooleanOptionalAction, default=True, help="whether to remove redundant outputs after success")
-    parser.add_argument("--clean", action=argparse.BooleanOptionalAction, default=True, help="whether to cleanup output directory on failure")
-    parser.add_argument("--lora_adapter_path", type=str, required=True, help="LoRA adapter source path")
-    parser.add_argument("--lora_request_path", type=str, default=None, help="LoRA request path; defaults to the compiled die directory")
-    parser.add_argument("--lora_name", type=str, default="lora0", help="LoRA request name")
-    parser.add_argument("--lora_int_id", type=int, default=1, help="LoRA request integer ID")
-    parser.add_argument("--max_loras", type=int, default=3, help="maximum number of LoRA adapters")
-    parser.add_argument("--max_lora_rank", type=int, default=8, help="maximum LoRA rank")
-    parser.set_defaults(simplify=True, clean=True)
-    return parser
 
+    print(f"model={MODEL_PATH}")
+    print(f"lora_adapter={LORA_ADAPTER_PATH}")
+    print(f"aot_dir={AOT_DIR}")
+    print(
+        f"batch=1, tp_size={TP_SIZE}, max_loras={MAX_LORAS}, "
+        f"max_lora_rank={MAX_LORA_RANK}, prefill_lens={PREFILL_LENS}"
+    )
 
-def build_prompt(processor: AutoProcessor, text_only: bool) -> str:
-    if text_only:
-        messages = [{"role": "user", "content": "请用一句话介绍北京。"}]
-    else:
-        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "请描述这张图片的内容。"}]}]
-    return processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    llm = LLM(
+        model=MODEL_PATH,
+        tokenizer=MODEL_PATH,
+        tensor_parallel_size=TP_SIZE,
+        max_model_len=8192,
+        distributed_executor_backend=EdgeXExecutor,
+        worker_cls="tyllm.vllm_ext.edgex_executor.EdgeXWorker",
+        dtype="half",
+        block_size=64,
+        mm_processor_kwargs={
+            "min_pixels": 16 * 32 * 32,
+            "max_pixels": 1024 * 32 * 32,
+        },
+        gpu_memory_utilization=0.5,
+        mm_processor_cache_gb=0,
+        enable_prefix_caching=False,
+        enforce_eager=True,
+        enable_lora=True,
+        max_loras=MAX_LORAS,
+        max_lora_rank=MAX_LORA_RANK,
+        max_num_seqs=1,
+    )
 
+    outputs = llm.generate(
+        {
+            "prompt": prompt,
+            "multi_modal_data": {"image": image},
+        },
+        sampling_params=SamplingParams(temperature=0, max_tokens=32),
+        lora_request=LoRARequest(
+            "lora0",
+            1,
+            os.path.join(AOT_DIR, f"{TP_SIZE}die"),
+        ),
+        use_tqdm=False,
+    )
+    print(outputs[0].outputs[0].text)
 
-def build_aot_path(args: argparse.Namespace, tp_size: int) -> str:
-    tag_suffix = os.environ.get("tag_suffix", "v1.2.0")
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
-    base = args.model_save.rstrip("/")
-    if args.text_only:
-        return f"{base}_AOT.c{args.max_model_len}.{tp_size}die.u{args.user}.{tag_suffix}_{timestamp}"
-    return f"{base}_AOT.640x352.c{args.max_model_len}.{tp_size}die.{args.modality}.u{args.user}.{tag_suffix}_{timestamp}"
-
-
-def copy_model_config(model_dir: str, model_config_dir: str, compiled_root_dir: str, text_only: bool) -> None:
-    files_to_copy = [
-        "vocab.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "chat_template.jinja",
-        "generation_config.json",
-    ]
-    for filename in files_to_copy:
-        src = os.path.join(model_dir, filename)
-        dst = os.path.join(model_config_dir, filename)
-        if os.path.exists(src):
-            shutil.copy2(src, dst)
-
-    if not text_only:
-        die_folder_files = [
-            "preprocessor_config.json",
-            "video_preprocessor_config.json",
-        ]
-        for filename in die_folder_files:
-            src = os.path.join(model_dir, filename)
-            dst = os.path.join(compiled_root_dir, filename)
-            if os.path.exists(src):
-                shutil.copy2(src, dst)
-
-def main() -> None:
-    args = build_parser().parse_args()
-
-    torch_edgex.set_device_trace_only("x6000", args.trace_only)
-    torch_edgex.set_device_mode("compile_with_byoa", False)
-    torch_edgex.set_device_mode("jit_device", "cuda")
-
-    tp_size = args.num_die
-    seq_len = [1, args.prefill_lens] if args.user == 1 else [1, 8, args.prefill_lens]
-    exec_mode = "JIT" if args.jit_exec_mode else "AOT"
-    visual_tp_size = args.visual_tp_size if args.visual_tp_size > 0 else min(tp_size, 2)
-    attn_tp_size = args.attn_tp_size if args.attn_tp_size > 0 else min(tp_size, 2)
-
-    model_path = args.model_dir
-    image_path = args.image_path
-    source_tokenizer = args.source_tokenizer
-    aot_path = build_aot_path(args, tp_size)
-    compiled_root_dir = os.path.join(aot_path, f"{tp_size}die")
-    model_config_dir = os.path.join(aot_path, "config")
-    mrope_dir = os.path.join(compiled_root_dir, "mrope")
-    visual_dir = os.path.join(compiled_root_dir, "visual")
-    lora_request_path = args.lora_request_path or compiled_root_dir
-
-    os.environ["TYLLM_AOT_LORA_PATH"] = args.lora_adapter_path
-
-    if os.path.exists(aot_path) and os.path.isdir(aot_path):
-        shutil.rmtree(aot_path)
-        print(f"目录存在，已删除目录内容: {aot_path}")
-    else:
-        print(f"目录不存在，准备新建: {aot_path}")
-    os.makedirs(model_config_dir, exist_ok=True)
-
-    torch_edgex.set_device_mode("vl_image_path", image_path)
-    torch_edgex.set_device_mode("exec_mode", exec_mode)
-    torch_edgex.set_device_mode("visual_tp_size", visual_tp_size)
-    torch_edgex.set_device_mode("attn_tp_size", attn_tp_size)
-    torch_edgex.set_device_mode("linear_attn_tp_size", tp_size)
-    torch_edgex.set_device_mode("linear_attn_out_proj_tp_size", tp_size)
-    torch_edgex.set_device_mode("eager_on_chip", False)
-    torch_edgex.set_device_mode("prefill_lens", seq_len)
-    torch_edgex.set_device_mode("batch_list", [1])
-    torch_edgex.set_device_mode("AOT_DIR", aot_path)
-
-    logging.getLogger("vllm").setLevel(logging.WARNING)
-    torch._dynamo.reset()
-
-    ModelConfig.verify_with_parallel_config = lambda a, b: True
-    origin_post_init = ParallelConfig.__post_init__
-
-    def modified_post_init(self):
-        origin_post_init(self)
-        self.world_size = tp_size
-
-    ParallelConfig.__post_init__ = modified_post_init
-
-    success = False
-    llm = None
-    try:
-        import vllm.envs as envs
-
-        envs.VLLM_ENABLE_V1_MULTIPROCESSING = False
-        envs.VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS = None
-
-        processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
-        prompt = build_prompt(processor, args.text_only)
-
-        image = None
-        if not args.text_only:
-            image = Image.open(image_path).convert("RGB")
-            image = image.resize((640, 352))
-
-        llm = LLM(
-            model=model_path,
-            tensor_parallel_size=tp_size,
-            max_model_len=args.max_model_len,
-            tokenizer=model_path,
-            distributed_executor_backend=EdgeXExecutor,
-            dtype="half",
-            worker_cls="tyllm.vllm_ext.edgex_executor.EdgeXWorker",
-            block_size=64,
-            mm_processor_kwargs={"min_pixels": 16 * 32 * 32, "max_pixels": 1024 * 32 * 32},
-            gpu_memory_utilization=0.5,
-            mm_processor_cache_gb=0,
-            enable_prefix_caching=False,
-            enforce_eager=True,
-            enable_lora=True,
-            max_loras=args.max_loras,
-            max_lora_rank=args.max_lora_rank,
-            max_num_seqs=1,
-        )
-
-        with open(os.path.join(model_config_dir, "vllm_config.json"), "w") as f:
-            json.dump(asdict(llm.llm_engine.vllm_config), f, indent=2, default=str)
-
-        sampling_params = SamplingParams(
-            temperature=args.temperature,
-            top_p=args.top_p,
-            seed=0,
-            max_tokens=args.max_tokens,
-            logprobs=5 if args.debug_output or os.getenv("TYLLM_DEBUG_OUTPUT") else None,
-        )
-
-        if args.text_only:
-            request = {"prompt": prompt}
-        else:
-            request = {"prompt": prompt, "multi_modal_data": {"image": image}}
-
-        lora_request = LoRARequest(
-            args.lora_name,
-            args.lora_int_id,
-            lora_request_path,
-        )
-        _ = llm.generate(
-            request,
-            sampling_params=sampling_params,
-            lora_request=lora_request,
-        )
-        print("编译完成，开始处理生成的文件...")
-
-        print(f"处理 {mrope_dir} 下的文件...")
-        mrope_so_files = glob.glob(os.path.join(mrope_dir, "*.so"))
-        mrope_params_files = glob.glob(os.path.join(mrope_dir, "*.params"))
-        if mrope_so_files:
-            shutil.copy2(mrope_so_files[0], os.path.join(compiled_root_dir, "compute_rope_param.so"))
-        if mrope_params_files:
-            shutil.copy2(mrope_params_files[0], os.path.join(compiled_root_dir, "compute_rope_param.params"))
-
-
-        if not args.text_only:
-            print(f"处理 {visual_dir} 下的文件...")
-            aot_config_files = glob.glob(os.path.join(visual_dir, "*aot_config.json"))
-            if aot_config_files:
-                os.replace(aot_config_files[0], os.path.join(visual_dir, "aot_config.json"))
-            buffer_config_files = glob.glob(os.path.join(visual_dir, "*buffer_config.json"))
-            if buffer_config_files:
-                os.replace(buffer_config_files[0], os.path.join(visual_dir, "buffer_config.json"))
-            for i in range(tp_size):
-                so_files = glob.glob(os.path.join(visual_dir, f"*die{i}.so"))
-                if so_files:
-                    os.replace(so_files[0], os.path.join(visual_dir, f"vit_die{i}.so"))
-                param_files = glob.glob(os.path.join(visual_dir, f"*die{i}.params"))
-                if param_files:
-                    os.replace(param_files[0], os.path.join(visual_dir, f"constant_die{i}.params"))
-
-        compiled_tokenizer = os.path.join(compiled_root_dir, "tokenizer.json")
-        if source_tokenizer is not None:
-            if not os.path.isfile(source_tokenizer):
-                raise FileNotFoundError(
-                    f"source_tokenizer不存在: {source_tokenizer}"
-                )
-            shutil.copy2(source_tokenizer, compiled_tokenizer)
-            print(f"已复制source_tokenizer: {source_tokenizer} -> {compiled_tokenizer}")
-        else:
-            model_tokenizer = os.path.join(model_path, "tokenizer.json")
-            transform_tokenizer_merges(model_tokenizer, compiled_tokenizer)
-            print(
-                "未指定source_tokenizer，已转换model_dir中的tokenizer.json: "
-                f"{model_tokenizer} -> {compiled_tokenizer}"
-            )
-
-        if args.simplify:
-            cleanup_redundant_outputs(compiled_root_dir, aot_path)
-        print("文件处理完成!")
-        print("编译输出目录：", compiled_root_dir)
-        generate_md5_file(compiled_root_dir)
-
-        print("执行最终清理...")
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        print("程序执行完成!")
-        sys.stdout.flush()
-        success = True
-
-    except Exception as main_exc:
-        print(f"任务执行失败，将触发目录清理: {main_exc}")
-        raise
-    finally:
-        try:
-            if llm is not None:
-                del llm
-        except Exception as e:
-            print(f"清理模型资源时发生错误: {e}")
-        if not success and args.clean:
-            cleanup_failed_directory(aot_path)
-
-    if success:
-        try:
-            copy_model_config(model_path, model_config_dir, compiled_root_dir, args.text_only)
-        except Exception as e:
-            print(f"⚠️ 无法拷贝模型配置: {e}")
-        print("已复制模型config")
 
 if __name__ == "__main__":
     main()
@@ -2079,697 +1926,39 @@ if __name__ == "__main__":
 
 **使用说明**：
 
-纯语言编译：
 ```bash
-python3 build.py --model_dir /data/quantized_model/Qwen3.5-4B-GPTQv2-W4A16 --model_save /data/aot/Qwen3.5-4B-GPTQv2-W4A16 --num_die 3 --user 1 --prefill_lens 64 --max_model_len 8192 --trace_only --text_only --lora_adapter_path /data/qwen35_2b_lora_3die/lora_delivery --max_loras 3 --max_lora_rank 8
-```
-
-多模态编译：
-```bash
-python3 build.py --model_dir /data/quantized_model/Qwen3.5-4B-GPTQv2-W4A16 --model_save /data/aot/Qwen3.5-4B-GPTQv2-W4A16 --image_path  /data/test.jpg --num_die 3 --user 1 --prefill_lens 64 --max_model_len 8192 --trace_only --lora_adapter_path /data/qwen35_2b_lora_3die/lora_delivery --max_loras 3 --max_lora_rank 8
+  TYLLM_MODEL_PATH=/data/quantized_model/Qwen3.5-2B-AutoRound-awq \
+  TYLLM_LORA_ADAPTER_PATH=/data/lora/qwen35_2b_lora_3die/lora_delivery \
+  TYLLM_AOT_DIR=/data/aot/Qwen3.5-2B-AutoRound-awq-lora \
+  TYLLM_IMAGE_PATH=/data/test.jpg \
+  python3 -u build_qwen3_5_lora.py
 ```
 
 **参数说明**：
-- **lora_adapter_path**：指向原始 LoRA adapter；编译时靠它替换 Linear、建立 LoRA 图。当前 AOT 校验阶段也靠它判断应加载“含 LoRA”的 AOT。
-- **max_loras**：决定图里保留几个 slot，也就是 AOT LoRA bank 第一维。
-- **max_lora_rank**：要支持 adapter 的最大 rank；当前 LoRA 是 rank 8。它也会进入 AOT 配置校验。
+- **TYLLM_MODEL_PATH**：量化后模型目录。
+- **TYLLM_LORA_ADAPTER_PATH**：LoRA adapter目录。
+- **TYLLM_AOT_DIR**：AOT编译产物输出目录。
+- **TYLLM_IMAGE_PATH**：多模态编译使用的输入图片。
 
-LoRA权重转换工具：
+**LoRA权重转换**：
 
-```python
-#!/usr/bin/env python3
-from __future__ import annotations
+转换脚本在镜像内
 
-import argparse
-import json
-import os
-import shutil
-import sys
-import tempfile
-from pathlib import Path
-from typing import Any
-
-import numpy as np
-
-from tyllm import torch_edgex
-
-
-def _parse_int_list(value: str) -> list[int]:
-    items = [item.strip() for item in value.split(",") if item.strip()]
-    if not items:
-        raise argparse.ArgumentTypeError("expected a comma separated int list")
-    return [int(item) for item in items]
-
-
-def _resolve_aot_artifacts(
-    aot_dir: Path, die_num: int | None
-) -> tuple[Path, Path, dict[str, Any]]:
-    if (aot_dir / "config.json").exists():
-        artifacts_dir = aot_dir
-        root_dir = aot_dir.parent
-    else:
-        if die_num is None:
-            candidates = sorted(
-                path for path in aot_dir.glob("*die") if (path / "config.json").exists()
-            )
-            if len(candidates) != 1:
-                names = ", ".join(str(path) for path in candidates) or "none"
-                raise RuntimeError(
-                    "Cannot infer AOT die directory. Pass --die-num explicitly. "
-                    f"Candidates: {names}"
-                )
-            artifacts_dir = candidates[0]
-        else:
-            artifacts_dir = aot_dir / f"{die_num}die"
-        root_dir = aot_dir
-
-    with open(artifacts_dir / "config.json", "r", encoding="utf-8") as f:
-        config = json.load(f)
-    return root_dir, artifacts_dir, config
-
-
-def _default_output_path(lora_adapter: Path, aot_root: Path, tp_rank: int) -> Path:
-    name = aot_root.name or "aot"
-    return lora_adapter / "aot_params" / f"{name}_lora_die{tp_rank}.params"
-
-
-def _default_output_dir(lora_adapter: Path, aot_root: Path) -> Path:
-    name = aot_root.name or "aot"
-    return lora_adapter / "aot_params" / f"{name}_lora"
-
-
-def _resolve_output_paths(
-    output: str | None,
-    lora_adapter: Path,
-    aot_root: Path,
-    die_num: int,
-    batch_size: int,
-    tp_rank: int,
-) -> dict[int, Path]:
-    if die_num == 1:
-        output_path = (
-            Path(output).resolve()
-            if output
-            else _default_output_path(lora_adapter, aot_root, tp_rank).resolve()
-        )
-        # The single worker is always rank zero. Keep --tp-rank only for the
-        # legacy output filename/reference selection.
-        return {0: output_path}
-
-    output_root = (
-        Path(output).resolve()
-        if output
-        else _default_output_dir(lora_adapter, aot_root).resolve()
-    )
-    if output_root.suffix == ".params":
-        raise RuntimeError(
-            "For multi-die conversion, --output must be a directory. The converter "
-            "writes one lora_die{rank}.params file per die."
-        )
-    batch_dir = (
-        output_root
-        if output_root.name == f"batch_{batch_size}"
-        else output_root / f"batch_{batch_size}"
-    )
-    return {rank: batch_dir / f"lora_die{rank}.params" for rank in range(die_num)}
-
-
-def _resolve_reference_path(
-    reference_params: str | None,
-    artifacts_dir: Path,
-    batch_size: int,
-    tp_rank: int,
-) -> Path:
-    if reference_params is None:
-        return artifacts_dir / f"batch_{batch_size}" / f"lora_die{tp_rank}.params"
-
-    reference_root = Path(reference_params).resolve()
-    if reference_root.is_file():
-        return reference_root
-
-    candidates = [
-        reference_root / f"batch_{batch_size}" / f"lora_die{tp_rank}.params",
-        reference_root / f"lora_die{tp_rank}.params",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
-
-
-def _compiled_lora_config(aot_config: dict[str, Any]) -> tuple[int, int]:
-    lora_config = aot_config.get("lora_config")
-    if not isinstance(lora_config, dict):
-        raise RuntimeError(
-            "The selected AOT artifact has no lora_config. Recompile it with "
-            "the current Qwen3.5 LoRA path first."
-        )
-
-    max_loras = int(lora_config.get("max_loras", 0) or 0)
-    max_lora_rank = int(lora_config.get("max_lora_rank", 0) or 0)
-    if max_loras <= 0 or max_lora_rank <= 0:
-        raise RuntimeError(
-            "Invalid LoRA shape in AOT config: "
-            f"max_loras={max_loras}, max_lora_rank={max_lora_rank}."
-        )
-    return max_loras, max_lora_rank
-
-
-def _resolve_batch_size(
-    aot_config: dict[str, Any], requested_batch_size: int | None
-) -> int:
-    if requested_batch_size is not None:
-        return requested_batch_size
-
-    batch_list = aot_config.get("batch_list", [])
-    if isinstance(batch_list, list):
-        for batch_size in batch_list:
-            batch_size = int(batch_size)
-            if batch_size > 0:
-                return batch_size
-    return 1
-
-
-def _param_meta(params: dict[str, Any]) -> dict[str, tuple[tuple[int, ...], str]]:
-    metas: dict[str, tuple[tuple[int, ...], str]] = {}
-    for name, value in params.items():
-        array = value.numpy()
-        metas[name] = (tuple(array.shape), str(array.dtype))
-    return metas
-
-
-def _canonicalize_lora_params(params: dict[str, Any], slot_idx: int) -> dict[str, Any]:
-    """Drop the compile-time LoRA slot dimension from generated params."""
-
-    import tvm
-
-    from tyllm.models.lora_params import (
-        extract_lora_adapter_param,
-        is_lora_param_name,
-    )
-
-    canonical_params = {}
-    for name, value in params.items():
-        if not is_lora_param_name(name):
-            continue
-        array = value.numpy()
-        adapter = extract_lora_adapter_param(name, array, array.shape, slot_idx)
-        canonical_params[name] = tvm.runtime.tensor(adapter)
-    return canonical_params
-
-
-def _legacy_adapter_param_meta(
-    params: dict[str, Any], slot_idx: int
-) -> dict[str, tuple[tuple[int, ...], str]]:
-    from tyllm.models.lora_params import extract_lora_adapter_param
-
-    metas: dict[str, tuple[tuple[int, ...], str]] = {}
-    for name, value in params.items():
-        array = value.numpy()
-        adapter = extract_lora_adapter_param(name, array, array.shape, slot_idx)
-        metas[name] = (tuple(adapter.shape), str(adapter.dtype))
-    return metas
-
-
-def _validate_against_reference(
-    output_path: Path, reference_path: Path, slot_idx: int
-) -> None:
-    if not reference_path.exists():
-        print(
-            f"[warn] reference LoRA params not found, skip shape check: {reference_path}"
-        )
-        return
-
-    from tyllm.utility.chat_utility import load_params
-    from tyllm.models.lora_params import extract_lora_adapter_param
-
-    output_params = load_params(str(output_path))
-    reference_params = load_params(str(reference_path))
-    output_meta = _param_meta(output_params)
-    reference_meta = _legacy_adapter_param_meta(reference_params, slot_idx)
-
-    missing = sorted(set(reference_meta) - set(output_meta))
-    extra = sorted(set(output_meta) - set(reference_meta))
-    shape_mismatch = [
-        name
-        for name in sorted(set(output_meta) & set(reference_meta))
-        if output_meta[name] != reference_meta[name]
-    ]
-    value_mismatch = []
-    for name in sorted(set(output_meta) & set(reference_meta)):
-        if output_meta[name] != reference_meta[name]:
-            continue
-        output_array = output_params[name].numpy()
-        reference_array = extract_lora_adapter_param(
-            name,
-            reference_params[name].numpy(),
-            reference_params[name].numpy().shape,
-            slot_idx,
-        )
-        if np.array_equal(output_array, reference_array):
-            continue
-        max_abs = float(
-            np.max(
-                np.abs(
-                    output_array.astype(np.float32) - reference_array.astype(np.float32)
-                )
-            )
-        )
-        value_mismatch.append((name, max_abs))
-
-    if missing or extra or shape_mismatch or value_mismatch:
-        lines = [
-            "Generated canonical LoRA params do not match the reference AOT graph.",
-            f"reference: {reference_path}",
-            f"output: {output_path}",
-        ]
-        if missing:
-            lines.append(f"missing keys: {missing[:8]}")
-        if extra:
-            lines.append(f"extra keys: {extra[:8]}")
-        if shape_mismatch:
-            examples = [
-                (name, output_meta[name], reference_meta[name])
-                for name in shape_mismatch[:8]
-            ]
-            lines.append(f"shape/dtype mismatches: {examples}")
-        if value_mismatch:
-            lines.append(f"value mismatches (max_abs): {value_mismatch[:8]}")
-        raise RuntimeError("\n".join(lines))
-
-    print(
-        "[ok] generated canonical LoRA params match reference key/shape/dtype/value: "
-        f"{len(output_meta)} tensors"
-    )
-
-
-def _unwrap_model(model: Any) -> Any:
-    seen: set[int] = set()
-    while hasattr(model, "unwrap"):
-        seen.add(id(model))
-        next_model = model.unwrap()
-        if next_model is model or id(next_model) in seen:
-            break
-        model = next_model
-    return model
-
-
-def _get_model_tp_rank(raw_model: Any, language_model: Any) -> int:
-    for candidate in (language_model, raw_model):
-        tp_rank = getattr(candidate, "tp_rank", None)
-        if tp_rank is not None:
-            return int(tp_rank)
-
-    import torch
-
-    if torch.distributed.is_available() and torch.distributed.is_initialized():
-        return int(torch.distributed.get_rank())
-    return 0
-
-
-def convert_lora_params_on_worker(model: Any) -> dict[str, Any]:
-    """Runs inside the vLLM model worker through LLM.apply_model."""
-    from tyllm import build_util
-    from tyllm.models.qwen3_5 import prepare_qwen3_5_lora_for_compile
-    from tyllm.utility.chat_utility import save_params
-
-    lora_adapter = os.environ["TYLLM_LORA_CONVERT_ADAPTER"]
-    output_paths = json.loads(os.environ["TYLLM_LORA_CONVERT_OUTPUT_PATHS"])
-    work_artifacts = Path(os.environ["TYLLM_LORA_CONVERT_WORK_ARTIFACTS"])
-    seq_lens = _parse_int_list(os.environ["TYLLM_LORA_CONVERT_SEQ_LENS"])
-    batch_size = int(os.environ["TYLLM_LORA_CONVERT_BATCH_SIZE"])
-    max_model_len = int(os.environ["TYLLM_LORA_CONVERT_MAX_MODEL_LEN"])
-    die_num = int(os.environ["TYLLM_LORA_CONVERT_DIE_NUM"])
-    slot_idx = int(os.environ["TYLLM_LORA_CONVERT_SLOT_IDX"])
-    save_per_seq = os.environ.get("TYLLM_LORA_CONVERT_SAVE_PER_SEQ") == "1"
-
-    raw_model = _unwrap_model(model)
-    language_model = getattr(raw_model, "language_model", raw_model)
-    tp_rank = _get_model_tp_rank(raw_model, language_model)
-    try:
-        output_path = Path(output_paths[str(tp_rank)])
-    except KeyError as exc:
-        raise RuntimeError(
-            f"No LoRA output path configured for tp rank {tp_rank}: {output_paths}"
-        ) from exc
-
-    replaced = prepare_qwen3_5_lora_for_compile(
-        raw_model, lora_adapter, slot_idx=slot_idx
-    )
-    if replaced <= 0:
-        raise RuntimeError(f"No LoRA target was prepared from adapter: {lora_adapter}")
-
-    if hasattr(language_model, "_convert_w4_weights_for_aot"):
-        language_model._convert_w4_weights_for_aot()
-
-    merged_lora_params: dict[str, Any] = {}
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    work_artifacts.mkdir(parents=True, exist_ok=True)
-
-    for seq_len in seq_lens:
-        result = build_util.aot_compile_qwen3_5_spmd(
-            language_model,
-            str(work_artifacts),
-            dev_count=die_num,
-            batch_size=batch_size,
-            seq_len=seq_len,
-            max_model_len=max_model_len,
-            input_embed=True,
-            block_table=None,
-            is_decode=seq_len == 1,
-            prepare_only=True,
-        )
-        lora_params = build_util._extract_lora_params(result["result_params"])
-        if not lora_params:
-            raise RuntimeError(f"No LoRA params were produced for seq_len={seq_len}")
-        canonical_lora_params = _canonicalize_lora_params(lora_params, slot_idx)
-        merged_lora_params.update(canonical_lora_params)
-
-        if save_per_seq:
-            seq_output = output_path.with_name(
-                f"{output_path.stem}_seqlen_{seq_len}{output_path.suffix}"
-            )
-            save_params(canonical_lora_params, str(seq_output))
-            print(f"[ok] saved canonical per-seq LoRA params: {seq_output}")
-
-    save_params(merged_lora_params, str(output_path))
-    print(
-        "[ok] saved merged single-adapter LoRA params: "
-        f"{output_path} ({len(merged_lora_params)} tensors, {replaced} targets)"
-    )
-    return {
-        "tp_rank": tp_rank,
-        "output_path": str(output_path),
-        "num_params": len(merged_lora_params),
-        "replaced_targets": replaced,
-    }
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Convert a Qwen3.5 LoRA adapter directory into tyllm AOT LoRA params. "
-            "The output stores one adapter without the compiled max_loras dimension. "
-            "The target AOT graph must already have been compiled with LoRA inputs."
-        )
-    )
-    parser.add_argument(
-        "--model-path",
-        default="/home/npu_toolchain/zbw/model/Qwen3.5-2B-int4-AutoRound-awq_pack",
-        help="Base Qwen3.5 model path used by the AOT graph.",
-    )
-    parser.add_argument(
-        "--lora-adapter",
-        required=True,
-        help="LoRA adapter directory containing adapter_config.json and adapter_model.safetensors.",
-    )
-    parser.add_argument(
-        "--aot-dir",
-        required=True,
-        help="Existing AOT root directory or its Ndie artifact directory.",
-    )
-    parser.add_argument(
-        "--output",
-        help=(
-            "Output .params path for one die, or output directory for multi-die "
-            "conversion. Multi-die writes batch_N/lora_die{rank}.params."
-        ),
-    )
-    parser.add_argument("--die-num", type=int, help="Tensor parallel die count.")
-    parser.add_argument(
-        "--tp-rank",
-        type=int,
-        default=0,
-        help="Output rank for single-die conversion; ignored when die-num is greater than one.",
-    )
-    parser.add_argument(
-        "--seq-lens",
-        type=_parse_int_list,
-        help="Comma separated sequence lengths. Defaults to config.json seq_len_list.",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        help="Batch size to prepare. Defaults to the first config.json batch_list entry.",
-    )
-    parser.add_argument("--max-model-len", type=int)
-    parser.add_argument(
-        "--slot-idx",
-        type=int,
-        default=0,
-        help=(
-            "Temporary compile-time slot used to extract the adapter. The output "
-            "is slot-independent and can be loaded into any runtime slot."
-        ),
-    )
-    parser.add_argument(
-        "--max-loras",
-        type=int,
-        help="Optional consistency check. Must match config.json lora_config.max_loras.",
-    )
-    parser.add_argument(
-        "--max-lora-rank",
-        type=int,
-        help="Optional consistency check. Must match config.json lora_config.max_lora_rank.",
-    )
-    parser.add_argument("--jit-device", default="cuda")
-    parser.add_argument(
-        "--work-dir", help="Temporary directory for relay preparation files."
-    )
-    parser.add_argument(
-        "--reference-params",
-        help=(
-            "Reference AOT lora_die*.params file for one die, or an AOT/batch "
-            "directory containing lora_die{rank}.params for multi-die validation."
-        ),
-    )
-    parser.add_argument("--save-per-seq", action="store_true")
-    parser.add_argument("--keep-work-dir", action="store_true")
-    parser.add_argument(
-        "--force", action="store_true", help="Overwrite output if it exists."
-    )
-    return parser.parse_args()
-
-
-def main() -> int:
-    args = parse_args()
-
-    model_path = Path(args.model_path).resolve()
-    lora_adapter = Path(args.lora_adapter).resolve()
-    aot_root, artifacts_dir, config = _resolve_aot_artifacts(
-        Path(args.aot_dir).resolve(), args.die_num
-    )
-    aot_config = config.get("aot_config", {})
-
-    die_num = args.die_num or int(aot_config.get("die_num", 1))
-    if not aot_config.get("lora_token_ids_input", False):
-        raise RuntimeError(
-            "The selected AOT artifact was not compiled with LoRA token id inputs. "
-            "Recompile AOT with LoRA enabled first."
-        )
-
-    max_loras, max_lora_rank = _compiled_lora_config(aot_config)
-    if args.max_loras is not None and args.max_loras != max_loras:
-        raise RuntimeError(
-            "--max-loras must match the compiled AOT graph: "
-            f"requested {args.max_loras}, compiled {max_loras}."
-        )
-    if args.max_lora_rank is not None and args.max_lora_rank != max_lora_rank:
-        raise RuntimeError(
-            "--max-lora-rank must match the compiled AOT graph: "
-            f"requested {args.max_lora_rank}, compiled {max_lora_rank}."
-        )
-    if args.slot_idx < 0 or args.slot_idx >= max_loras:
-        raise RuntimeError(
-            f"--slot-idx must be in [0, {max_loras}), got {args.slot_idx}."
-        )
-    print(
-        "[info] using compiled LoRA shape: "
-        f"max_loras={max_loras}, max_lora_rank={max_lora_rank}"
-    )
-    print("[info] output format: one adapter per tensor; runtime selects the slot.")
-
-    seq_lens = args.seq_lens or [int(v) for v in aot_config.get("seq_len_list", [1])]
-    batch_size = _resolve_batch_size(aot_config, args.batch_size)
-    if args.batch_size is None:
-        print(f"[info] using AOT config batch_size={batch_size}")
-    max_model_len = args.max_model_len or int(aot_config.get("cache_len", 8192))
-    output_paths = _resolve_output_paths(
-        args.output,
-        lora_adapter,
-        aot_root,
-        die_num,
-        batch_size,
-        args.tp_rank,
-    )
-    existing_outputs = [path for path in output_paths.values() if path.exists()]
-    if existing_outputs and not args.force:
-        raise RuntimeError(
-            "Output already exists, pass --force to overwrite: "
-            + ", ".join(str(path) for path in existing_outputs)
-        )
-
-    if die_num > 1 and args.reference_params:
-        reference_arg = Path(args.reference_params).resolve()
-        if reference_arg.is_file():
-            raise RuntimeError(
-                "For multi-die conversion, --reference-params must be a directory "
-                "containing one lora_die{rank}.params file per die."
-            )
-    reference_paths = {
-        rank: _resolve_reference_path(
-            args.reference_params,
-            artifacts_dir,
-            batch_size,
-            args.tp_rank if die_num == 1 else rank,
-        )
-        for rank in output_paths
-    }
-
-    if args.work_dir:
-        work_dir = Path(args.work_dir).resolve()
-        work_artifacts = work_dir / f"{die_num}die"
-    else:
-        work_dir = Path(tempfile.mkdtemp(prefix="tyllm_lora_param_convert_"))
-        work_artifacts = work_dir / f"{die_num}die"
-
-    os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
-    os.environ["TYLLM_LORA_CONVERT_ADAPTER"] = str(lora_adapter)
-    os.environ["TYLLM_LORA_CONVERT_OUTPUT_PATHS"] = json.dumps(
-        {str(rank): str(path) for rank, path in output_paths.items()}, sort_keys=True
-    )
-    os.environ["TYLLM_LORA_CONVERT_WORK_ARTIFACTS"] = str(work_artifacts)
-    os.environ["TYLLM_LORA_CONVERT_SEQ_LENS"] = ",".join(str(v) for v in seq_lens)
-    os.environ["TYLLM_LORA_CONVERT_BATCH_SIZE"] = str(batch_size)
-    os.environ["TYLLM_LORA_CONVERT_MAX_MODEL_LEN"] = str(max_model_len)
-    os.environ["TYLLM_LORA_CONVERT_DIE_NUM"] = str(die_num)
-    os.environ["TYLLM_LORA_CONVERT_SLOT_IDX"] = str(args.slot_idx)
-    os.environ["TYLLM_LORA_CONVERT_SAVE_PER_SEQ"] = "1" if args.save_per_seq else "0"
-    os.environ["TYLLM_AOT_LORA_PATH"] = str(lora_adapter)
-
-    try:
-
-        torch_edgex.set_device_mode("jit_device", args.jit_device)
-        torch_edgex.set_device_mode("exec_mode", "JIT")
-        torch_edgex.set_device_mode("AOT_DIR", str(aot_root))
-        torch_edgex.set_device_mode("prefill_lens", seq_lens)
-        torch_edgex.set_device_mode("batch_list", [batch_size])
-        torch_edgex.set_device_mode("visual_tp_size", 1)
-        torch_edgex.set_device_mode(
-            "attn_tp_size", int(aot_config.get("attn_tp_size", die_num))
-        )
-        torch_edgex.set_device_mode(
-            "linear_attn_tp_size", int(aot_config.get("linear_attn_tp_size", die_num))
-        )
-        torch_edgex.set_device_mode(
-            "linear_attn_out_proj_tp_size",
-            int(aot_config.get("linear_attn_out_proj_tp_size", die_num)),
-        )
-        torch_edgex.set_device_mode(
-            "die_remap", aot_config.get("die_remap", list(range(die_num)))
-        )
-        torch_edgex.set_device_mode("eager_on_chip", False)
-
-        import vllm.envs as envs
-        from vllm import LLM
-        from vllm.config import ModelConfig, ParallelConfig
-        from tyllm.vllm_ext.edgex_executor import EdgeXExecutor
-
-        envs.VLLM_ENABLE_V1_MULTIPROCESSING = False
-        envs.VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS = None
-
-        ModelConfig.verify_with_parallel_config = lambda self, parallel_config: True
-        origin_post_init = ParallelConfig.__post_init__
-
-        def modified_post_init(self):
-            origin_post_init(self)
-            self.world_size = die_num
-
-        ParallelConfig.__post_init__ = modified_post_init
-
-        llm = LLM(
-            model=str(model_path),
-            tokenizer=str(model_path),
-            dtype="half",
-            tensor_parallel_size=die_num,
-            distributed_executor_backend=EdgeXExecutor,
-            worker_cls="tyllm.vllm_ext.edgex_executor.EdgeXWorker",
-            block_size=64,
-            mm_processor_kwargs={
-                "min_pixels": 16 * 32 * 32,
-                "max_pixels": 1024 * 32 * 32,
-            },
-            gpu_memory_utilization=0.5,
-            mm_processor_cache_gb=0,
-            enable_prefix_caching=False,
-            enforce_eager=True,
-            enable_lora=True,
-            max_loras=max_loras,
-            max_lora_rank=max_lora_rank,
-            max_model_len=max_model_len,
-            trust_remote_code=True,
-        )
-        worker_results = llm.apply_model(convert_lora_params_on_worker)
-        result_by_rank = {}
-        for result in worker_results:
-            if not isinstance(result, dict) or "tp_rank" not in result:
-                raise RuntimeError(
-                    f"Unexpected LoRA conversion worker result: {result!r}"
-                )
-            rank = int(result["tp_rank"])
-            if rank in result_by_rank:
-                raise RuntimeError(
-                    f"Duplicate LoRA conversion result for tp rank {rank}"
-                )
-            result_by_rank[rank] = result
-
-        missing_ranks = sorted(set(output_paths) - set(result_by_rank))
-        extra_ranks = sorted(set(result_by_rank) - set(output_paths))
-        if missing_ranks or extra_ranks:
-            raise RuntimeError(
-                "LoRA conversion workers did not match the requested TP layout: "
-                f"missing={missing_ranks}, extra={extra_ranks}."
-            )
-
-        for rank, output_path in output_paths.items():
-            if not output_path.exists():
-                raise RuntimeError(
-                    f"Conversion finished but output was not created for rank {rank}: "
-                    f"{output_path}"
-                )
-            _validate_against_reference(
-                output_path, reference_paths[rank], args.slot_idx
-            )
-
-        if die_num == 1:
-            print(f"[done] LoRA params: {output_paths[0]}")
-            print(
-                "Use this single-adapter file as TYLLM_LORA_REQUEST_PATH, or pass it as the "
-                "LoRARequest lora_path in the tyllm AOT run script."
-            )
-        else:
-            output_dir = next(iter(output_paths.values())).parent.parent
-            print(f"[done] multi-die LoRA params: {output_dir}")
-            print(
-                "Use this directory as TYLLM_LORA_REQUEST_PATH or LoRARequest.lora_path; "
-                "each TP rank loads its matching lora_die{rank}.params file."
-            )
-        return 0
-    finally:
-        if args.keep_work_dir:
-            print(f"[info] kept work dir: {work_dir}")
-        elif not args.work_dir:
-            shutil.rmtree(work_dir, ignore_errors=True)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-```
-
-权重转换：
 ```bash
-python3 convert.py --model-path /data/quantized_model/Qwen3.5-4B-GPTQv2-W4A16 --lora-adapter /data/qwen35_2b_lora_3die/lora_delivery --aot-dir /data/aot/Qwen3.5-4B-GPTQv2-W4A16/3die --output /path/to/new_lora_params
+python3 -u /usr/local/lib/python3.10/dist-packages/tyllm/utility/convert_qwen3_5_lora_to_aot_params.py \
+    --model-path /data/quantized_model/Qwen3.5-2B-AutoRound-awq \
+    --lora-adapter /data/lora/qwen35_2b_lora_3die/lora_delivery \
+    --aot-dir /data/aot/Qwen3.5-2B-AutoRound-awq-lora \
+    --output /data/aot/Qwen3.5-2B-AutoRound-awq-lora/converted_lora_params \
+    --force
 ```
+
+**参数说明**：
+- **--model-path**：量化后模型目录。
+- **--lora-adapter**：LoRA adapter目录。
+- **--aot-dir**：AOT编译产物输出目录。
+- **--output**：转换后的权重输出目录。
+- **--force**：覆盖已存在的权重转换产物。非必需。
 
 ## 常见问题
 
